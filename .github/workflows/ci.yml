@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cpu-python:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install CMake
+        run: python -m pip install cmake
+
+      - name: Configure C++ build
+        run: |
+          cmake -S . -B build/cpu \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWARPKEP_BUILD_PYTHON=OFF \
+            -DWARPKEP_ENABLE_CUDA=OFF
+
+      - name: Build C++ library
+        run: cmake --build build/cpu --parallel 2
+
+      - name: Run C++ executable
+        run: ./build/cpu/warpkep_smoke
+
+      - name: Build and install Python package
+        run: python -m pip install .
+
+      - name: Check Python import and version
+        run: |
+          python - <<'PY'
+          import warpkep
+          from importlib.metadata import version
+
+          reported = warpkep.version()
+          installed = version("warpkep")
+
+          assert reported == installed, (reported, installed)
+          print(f"warpkep {reported}")
+          PY
