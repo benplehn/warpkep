@@ -15,10 +15,12 @@ jobs:
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@v6
         with:
           python-version: "3.14"
 
@@ -53,3 +55,40 @@ jobs:
           assert reported == installed, (reported, installed)
           print(f"warpkep {reported}")
           PY
+
+  cuda-compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Build CUDA development image
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            -f docker/Dockerfile.cuda \
+            -t warpkep-cuda:ci \
+            docker
+
+      - name: Compile CUDA target
+        run: |
+          docker run --rm \
+            --platform linux/amd64 \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            warpkep-cuda:ci \
+            bash -c '
+              set -e
+              cmake -S . -B build/cuda-ci -G Ninja \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DWARPKEP_ENABLE_CUDA=ON \
+                -DWARPKEP_BUILD_PYTHON=OFF \
+                -DCMAKE_CUDA_ARCHITECTURES=80
+              cmake --build build/cuda-ci \
+                --target warpkep_cuda_compile_smoke \
+                --parallel 2
+            '
