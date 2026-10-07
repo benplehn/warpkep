@@ -26,14 +26,10 @@ struct Input {
 // Fixed, normalized workload: circular, elliptic and hyperbolic states,
 // with different orientations, radii and positive/negative durations.
 // Generation is excluded from the measured interval.
-
-
-// Generate a vector of inputs for the benchmark.
 std::vector<Input> make_inputs(std::size_t count) {
     const double pi = std::acos(-1.0);
     std::vector<Input> inputs(count);
 
-    // Populate the inputs with a variety of orbital states and durations.
     for (std::size_t i = 0; i < count; ++i) {
         const double angle = 2.0 * pi * static_cast<double>(i % 997) / 997.0;
         const double radius = 0.8 + 1.2 * static_cast<double>(i % 251) / 251.0;
@@ -49,7 +45,6 @@ std::vector<Input> make_inputs(std::size_t count) {
               speed * std::sin(inclination)}
         };
 
-        // Assign a duration that varies with the index, alternating between positive and negative values.
         const double duration = 0.2 + 1.8 * static_cast<double>(i % 509) / 509.0;
         inputs[i].dt = (i % 2 == 0) ? duration : -duration;
     }
@@ -69,7 +64,6 @@ void propagate_range(
     }
 }
 
-// Run the batch of propagations in parallel using the specified number of threads.
 void run_batch(
     const std::vector<Input>& inputs,
     std::vector<KeplerPropagationResult>& outputs,
@@ -80,7 +74,6 @@ void run_batch(
         return;
     }
 
-    // Create a vector of threads to handle the workload in parallel.
     std::vector<std::thread> workers;
     workers.reserve(thread_count - 1);
     const std::size_t base = inputs.size() / thread_count;
@@ -99,7 +92,6 @@ void run_batch(
             });
         }
 
-        // The last thread is handled by the caller to avoid an extra join.
         propagate_range(inputs, outputs, boundary(thread_count - 1), inputs.size());
     } catch (...) {
         for (auto& worker : workers) {
@@ -112,8 +104,6 @@ void run_batch(
     }
 }
 
-
-// Check that the serial and parallel results match, throwing an exception if they do not.
 void check_results(
     const std::vector<KeplerPropagationResult>& serial,
     const std::vector<KeplerPropagationResult>& parallel
@@ -140,8 +130,6 @@ void check_results(
     }
 }
 
-
-// Measure the time taken to run the batch of propagations and return the elapsed time in seconds.
 double measure(
     const std::vector<Input>& inputs,
     std::vector<KeplerPropagationResult>& outputs,
@@ -153,7 +141,6 @@ double measure(
     return std::chrono::duration<double>(stop - start).count();
 }
 
-// Compute the median of a vector of times, which is used to report the typical performance of the benchmark.
 double median(std::vector<double> times) {
     std::sort(times.begin(), times.end());
     const std::size_t middle = times.size() / 2;
@@ -161,8 +148,6 @@ double median(std::vector<double> times) {
         ? 0.5 * (times[middle - 1] + times[middle]) : times[middle];
 }
 
-
-// Parse a string as a positive integer and return it as a size_t, throwing an exception for invalid input.
 std::size_t positive_integer(const char* text) {
     const std::string value(text);
     if (value.empty() || value.find_first_not_of("0123456789") != std::string::npos) {

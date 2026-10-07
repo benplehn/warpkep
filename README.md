@@ -6,7 +6,7 @@ The aim is to make these building blocks usable in mission design studies and tr
 
 ## Status
 
-The repository currently contains a small C++ library and an executable that prints its version. Orbital algorithms, CUDA kernels and Python bindings are not implemented yet.
+The repository contains a small C++ library, Python bindings that only expose the version, and an internal CPU prototype of universal-variable Kepler propagation in FP64. The prototype is checked against pykep and heyoka in CI. CUDA kernels and the public numerical API are not implemented yet.
 
 ## Build
 
@@ -31,6 +31,21 @@ warpkep version: 0.1.0-dev
 ```
 
 This builds the current C++ skeleton. It works on macOS without CUDA.
+
+## CPU baseline
+
+```bash
+cmake -S . -B build/bench -DCMAKE_BUILD_TYPE=Release -DWARPKEP_BUILD_BENCHMARKS=ON
+cmake --build build/bench --target warpkep_cpu_baseline
+./build/bench/warpkep_cpu_baseline 200000 4
+```
+
+Batch of 200,000 two-body propagations (mu = 1, FP64), median of 5 runs, Apple M1 Pro, Apple clang 21:
+
+| Threads | Propagations/s |
+| ------- | -------------- |
+| 1       | 5.38 M         |
+| 4       | 20.27 M        |
 
 ## Planned work
 

@@ -2,7 +2,7 @@
 
 **Status:** initial design contract.
 
-warpkep currently provides a C++ library skeleton, Python bindings and a CUDA compilation example. The numerical APIs described below are planned; they are not implemented yet.
+warpkep currently provides a C++ library skeleton, Python bindings, a CUDA compilation example and an internal CPU prototype of Kepler propagation in FP64. The public numerical APIs described below, including the GPU batch interface, are not implemented yet.
 
 This contract defines their intended behaviour. Solver-specific domains, tolerances and defaults will be documented and validated as the implementations become available.
 
