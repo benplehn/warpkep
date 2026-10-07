@@ -1,0 +1,10 @@
+FROM nvidia/cuda:13.0.2-devel-ubuntu24.04
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        cmake \
+        ninja-build \
+        g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace

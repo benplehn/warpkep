@@ -31,3 +31,19 @@ if(WARPKEP_BUILD_PYTHON)
 
     install(TARGETS _core LIBRARY DESTINATION warpkep)
 endif()
+
+option(WARPKEP_ENABLE_CUDA "Enable CUDA compilation" OFF)
+
+if(WARPKEP_ENABLE_CUDA)
+    enable_language(CUDA)
+
+    add_library(warpkep_cuda_compile_smoke OBJECT
+        examples/cuda_smoke.cu
+    )
+
+    set_target_properties(warpkep_cuda_compile_smoke PROPERTIES
+        CUDA_STANDARD 17
+        CUDA_STANDARD_REQUIRED ON
+        CUDA_EXTENSIONS OFF
+    )
+endif()
