@@ -1,0 +1,45 @@
+# syntax=docker/dockerfile:1
+FROM python:3.13-slim-bookworm
+
+RUN python -m pip install --no-cache-dir --only-binary=:all: \
+        pykep==3.0.1 \
+        heyoka==7.10.1 \
+        lamberthub==1.0.0 \
+    && python -m pip check
+
+# Restore TOPS data omitted from the pykep 3.0.1 wheel.
+# Source: the upstream commit used to publish that release.
+RUN python - <<'PY'
+import importlib
+import json
+import sysconfig
+from importlib.metadata import version
+from pathlib import Path
+from urllib.request import urlopen
+
+commit = "a0c251deabc60c0738c36575b0585284eb26f2fa"
+base_url = (
+    f"https://raw.githubusercontent.com/esa/pykep/{commit}/"
+    "pykep/trajopt/gym/tops/"
+)
+
+destination = (
+    Path(sysconfig.get_path("purelib"))
+    / "pykep" / "trajopt" / "gym" / "tops"
+)
+destination.mkdir(parents=True, exist_ok=True)
+
+for family in ("cr3bp", "twobody", "ss", "mee"):
+    filename = f"_tops_{family}.json"
+    with urlopen(base_url + filename, timeout=60) as response:
+        data = response.read()
+    json.loads(data)
+    (destination / filename).write_bytes(data)
+    print(f"Restored {filename}")
+
+for name in ("pykep", "heyoka", "lamberthub"):
+    importlib.import_module(name)
+    print(f"{name}: {version(name)}")
+PY
+
+WORKDIR /workspace

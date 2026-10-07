@@ -92,3 +92,30 @@ jobs:
                 --target warpkep_cuda_compile_smoke \
                 --parallel 2
             '
+
+  references:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Build reference environment
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            -f docker/Dockerfile.references \
+            -t warpkep-references:ci \
+            docker
+
+      - name: Check reference propagators
+        run: |
+          docker run --rm \
+            --platform linux/amd64 \
+            -v "${{ github.workspace }}:/workspace:ro" \
+            -w /workspace \
+            warpkep-references:ci \
+            python validation/reference_smoke.py
