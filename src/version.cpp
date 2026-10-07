@@ -2,6 +2,6 @@
 
 namespace warpkep {
     const char* version() {
-        return "0.1.0-dev";
+        return "0.1.0.dev0";
     }
 }
