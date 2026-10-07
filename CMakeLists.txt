@@ -47,3 +47,51 @@ if(WARPKEP_ENABLE_CUDA)
         CUDA_EXTENSIONS OFF
     )
 endif()
+
+option(WARPKEP_BUILD_BENCHMARKS "Build CPU benchmarks" OFF)
+
+if(WARPKEP_BUILD_BENCHMARKS)
+    find_package(Threads REQUIRED)
+
+    add_executable(warpkep_cpu_baseline benchmarks/cpu_baseline.cpp)
+
+    target_link_libraries(warpkep_cpu_baseline
+        PRIVATE warpkep Threads::Threads
+    )
+endif()
+
+include(CTest)
+
+if(BUILD_TESTING)
+    add_executable(warpkep_test_stumpff tests/test_stumpff.cpp)
+    target_link_libraries(warpkep_test_stumpff PRIVATE warpkep)
+    add_test(NAME stumpff COMMAND warpkep_test_stumpff)
+
+    add_executable(warpkep_test_universal_kepler
+        tests/test_universal_kepler.cpp
+    )
+    target_link_libraries(warpkep_test_universal_kepler PRIVATE warpkep)
+    add_test(NAME universal_kepler_equation
+        COMMAND warpkep_test_universal_kepler
+    )
+    add_executable(warpkep_test_kepler_solver
+    tests/test_kepler_solver.cpp
+    )
+    target_link_libraries(warpkep_test_kepler_solver PRIVATE warpkep)
+    add_test(NAME universal_kepler_solver
+        COMMAND warpkep_test_kepler_solver
+    )
+    add_executable(warpkep_test_kepler_propagation
+    tests/test_kepler_propagation.cpp
+    )
+    target_link_libraries(warpkep_test_kepler_propagation PRIVATE warpkep)
+    add_test(NAME kepler_propagation
+        COMMAND warpkep_test_kepler_propagation
+    )
+
+    add_executable(warpkep_cpu_samples
+        validation/cpu_propagation_samples.cpp
+    )
+    target_link_libraries(warpkep_cpu_samples PRIVATE warpkep)
+endif()
+

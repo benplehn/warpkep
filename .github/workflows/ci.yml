@@ -36,6 +36,9 @@ jobs:
 
       - name: Build C++ library
         run: cmake --build build/cpu --parallel 2
+            
+      - name: Run C++ tests
+        run: ctest --test-dir build/cpu --output-on-failure
 
       - name: Run C++ executable
         run: ./build/cpu/warpkep_smoke
