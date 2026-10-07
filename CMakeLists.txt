@@ -53,9 +53,13 @@ option(WARPKEP_BUILD_BENCHMARKS "Build CPU benchmarks" OFF)
 if(WARPKEP_BUILD_BENCHMARKS)
     find_package(Threads REQUIRED)
 
-    add_executable(warpkep_cpu_baseline benchmarks/cpu_baseline.cpp)
+    add_executable(
+        warpkep_cpu_baseline
+        benchmarks/cpu_baseline.cpp
+    )
 
-    target_link_libraries(warpkep_cpu_baseline
+    target_link_libraries(
+        warpkep_cpu_baseline
         PRIVATE warpkep Threads::Threads
     )
 endif()
@@ -94,4 +98,3 @@ if(BUILD_TESTING)
     )
     target_link_libraries(warpkep_cpu_samples PRIVATE warpkep)
 endif()
-
