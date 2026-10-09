@@ -99,25 +99,28 @@ int main() {
     const double pi = std::acos(-1.0);
     const double sqrt3 = std::sqrt(3.0);
 
-    // The three reference cases: {position}, {velocity}.
-    const std::array<State, 3> initial_cases{
+    // The four reference cases: {position}, {velocity}.
+    const std::array<State, 4> initial_cases{
         State{{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}},   // circle forward
         State{{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}},   // circle backward
-        State{{0.5, 0.0, 0.0}, {0.0, sqrt3, 0.0}}  // ellipse a = 1, e = 0.5
+        State{{0.5, 0.0, 0.0}, {0.0, sqrt3, 0.0}}, // ellipse a = 1, e = 0.5
+        State{{0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}}    // circle in the YZ plane
     };
 
     // Propagation duration of each reference case.
-    const std::array<double, 3> duration_cases{
+    const std::array<double, 4> duration_cases{
         pi / 2.0,   // quarter turn forward
         -pi / 2.0,  // quarter turn backward
-        pi          // half period: periapsis -> apoapsis
+        pi,         // half period: periapsis -> apoapsis
+        pi / 2.0    // quarter turn in the YZ plane
     };
 
     // Analytical result of each reference case.
-    const std::array<State, 3> expected_cases{
+    const std::array<State, 4> expected_cases{
         State{{0.0, 1.0, 0.0}, {-1.0, 0.0, 0.0}},
         State{{0.0, -1.0, 0.0}, {1.0, 0.0, 0.0}},
-        State{{-1.5, 0.0, 0.0}, {0.0, -1.0 / sqrt3, 0.0}}
+        State{{-1.5, 0.0, 0.0}, {0.0, -1.0 / sqrt3, 0.0}},
+        State{{0.0, 0.0, 1.0}, {0.0, -1.0, 0.0}}
     };
 
     // 257 trajectories = 2 blocks of 256 threads: the second block has a
@@ -128,7 +131,7 @@ int main() {
     std::array<double, n> durations{};
     std::array<State, n> expected_states{};
 
-    // Repeat the three cases: case_index = 0, 1, 2, 0, 1, 2, ...
+    // Repeat the four cases: case_index = 0, 1, 2, 3, 0, 1, 2, 3, ...
     for (std::size_t i = 0; i < n; ++i) {
         const std::size_t case_index = i % initial_cases.size();
         initial_states[i] = initial_cases[case_index];
