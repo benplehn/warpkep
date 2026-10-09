@@ -28,6 +28,26 @@ struct DeviceArray {
     DeviceArray& operator=(const DeviceArray&) = delete;
 };
 
+// Owns one CUDA stream (a GPU work queue) and destroys it automatically.
+// cudaStreamNonBlocking: no implicit synchronization with the default stream.
+struct CudaStream {
+    cudaStream_t handle = nullptr;
+    cudaError_t error = cudaSuccess;
+
+    CudaStream() {
+        error = cudaStreamCreateWithFlags(&handle, cudaStreamNonBlocking);
+    }
+    ~CudaStream() {
+        if (handle != nullptr) {
+            cudaStreamDestroy(handle);
+        }
+    }
+
+    // Copying would destroy the same stream twice: forbid it.
+    CudaStream(const CudaStream&) = delete;
+    CudaStream& operator=(const CudaStream&) = delete;
+};
+
 // Prints a readable message if a CUDA call failed.
 bool check(cudaError_t error, const char* what) {
     if (error != cudaSuccess) {
@@ -37,16 +57,23 @@ bool check(cudaError_t error, const char* what) {
     return true;
 }
 
-// Copies a CPU std::array into a GPU DeviceArray of the same size.
+// Enqueues a copy of a CPU std::array into a GPU DeviceArray of the same size.
+// Asynchronous: the copy is only guaranteed complete after synchronizing the
+// stream, so `src` must stay alive and unchanged until then.
 template <typename T, std::size_t N>
-cudaError_t copy_to_gpu(DeviceArray<T>& dst, const std::array<T, N>& src) {
-    return cudaMemcpy(dst.ptr, src.data(), N * sizeof(T), cudaMemcpyHostToDevice);
+cudaError_t copy_to_gpu(DeviceArray<T>& dst, const std::array<T, N>& src, cudaStream_t stream) {
+    return cudaMemcpyAsync(
+        dst.ptr, src.data(), N * sizeof(T), cudaMemcpyHostToDevice, stream
+    );
 }
 
-// Copies a GPU DeviceArray back into a CPU std::array of the same size.
+// Enqueues a copy of a GPU DeviceArray back into a CPU std::array.
+// `dst` must not be read before the stream has been synchronized.
 template <typename T, std::size_t N>
-cudaError_t copy_to_cpu(std::array<T, N>& dst, const DeviceArray<T>& src) {
-    return cudaMemcpy(dst.data(), src.ptr, N * sizeof(T), cudaMemcpyDeviceToHost);
+cudaError_t copy_to_cpu(std::array<T, N>& dst, const DeviceArray<T>& src, cudaStream_t stream) {
+    return cudaMemcpyAsync(
+        dst.data(), src.ptr, N * sizeof(T), cudaMemcpyDeviceToHost, stream
+    );
 }
 
 int main() {
@@ -59,6 +86,12 @@ int main() {
         return 1;
     }
     std::cout << "Empty batch passed\n";
+
+    // The caller owns the stream; the launcher only submits work to it.
+    CudaStream stream;
+    if (!check(stream.error, "Stream creation")) {
+        return 1;
+    }
 
     // --- Test 2: analytical cases, mu = 1 ---
     using State = wd::CartesianState<double>;
@@ -162,18 +195,23 @@ int main() {
     }
     std::cout << "GPU allocation passed\n";
 
-    // --- 5. Copy the inputs from CPU to GPU ---
+    // Everything below goes into ONE queue, in this order:
+    //   input copies -> kernel -> output copies -> single final wait.
+    // The stream itself guarantees the order: no intermediate CPU wait.
+    const cudaStream_t s = stream.handle;
+
+    // --- 5. Enqueue the input copies (CPU -> GPU) ---
     for (const cudaError_t error : {
-             copy_to_gpu(d_r_x, h_r_x), copy_to_gpu(d_r_y, h_r_y),
-             copy_to_gpu(d_r_z, h_r_z), copy_to_gpu(d_v_x, h_v_x),
-             copy_to_gpu(d_v_y, h_v_y), copy_to_gpu(d_v_z, h_v_z),
-             copy_to_gpu(d_durations, durations)}) {
+             copy_to_gpu(d_r_x, h_r_x, s), copy_to_gpu(d_r_y, h_r_y, s),
+             copy_to_gpu(d_r_z, h_r_z, s), copy_to_gpu(d_v_x, h_v_x, s),
+             copy_to_gpu(d_v_y, h_v_y, s), copy_to_gpu(d_v_z, h_v_z, s),
+             copy_to_gpu(d_durations, durations, s)}) {
         if (!check(error, "Copy to GPU")) {
             return 1;
         }
     }
 
-    // --- 6. Launch the kernel ---
+    // --- 6. Enqueue the kernel, after the input copies in the same stream ---
     // The views bundle the six GPU addresses of each side.
     const wd::CartesianSoAConstView<double> input{
         d_r_x.ptr, d_r_y.ptr, d_r_z.ptr, d_v_x.ptr, d_v_y.ptr, d_v_z.ptr
@@ -184,31 +222,33 @@ int main() {
     };
     if (!check(launch_kepler_soa_double(
                    input, d_durations.ptr, 1.0, output,
-                   d_statuses.ptr, d_iterations.ptr, n, nullptr),
+                   d_statuses.ptr, d_iterations.ptr, n, s),
                "Kernel launch")) {
         return 1;
     }
 
-    // --- 7. Wait for the GPU, then copy the results back ---
-    // The launch is asynchronous: wait until the GPU has finished.
-    // This also reports errors that happened while the kernel was running.
-    if (!check(cudaStreamSynchronize(nullptr), "Kernel execution")) {
-        return 1;
-    }
-
+    // --- 7. Enqueue the output copies (GPU -> CPU), after the kernel ---
     std::array<double, n> h_out_r_x{}, h_out_r_y{}, h_out_r_z{};
     std::array<double, n> h_out_v_x{}, h_out_v_y{}, h_out_v_z{};
     std::array<wd::KeplerPropagationStatus, n> h_statuses{};
     std::array<int, n> h_iterations{};
 
     for (const cudaError_t error : {
-             copy_to_cpu(h_out_r_x, d_out_r_x), copy_to_cpu(h_out_r_y, d_out_r_y),
-             copy_to_cpu(h_out_r_z, d_out_r_z), copy_to_cpu(h_out_v_x, d_out_v_x),
-             copy_to_cpu(h_out_v_y, d_out_v_y), copy_to_cpu(h_out_v_z, d_out_v_z),
-             copy_to_cpu(h_statuses, d_statuses), copy_to_cpu(h_iterations, d_iterations)}) {
+             copy_to_cpu(h_out_r_x, d_out_r_x, s), copy_to_cpu(h_out_r_y, d_out_r_y, s),
+             copy_to_cpu(h_out_r_z, d_out_r_z, s), copy_to_cpu(h_out_v_x, d_out_v_x, s),
+             copy_to_cpu(h_out_v_y, d_out_v_y, s), copy_to_cpu(h_out_v_z, d_out_v_z, s),
+             copy_to_cpu(h_statuses, d_statuses, s),
+             copy_to_cpu(h_iterations, d_iterations, s)}) {
         if (!check(error, "Copy to CPU")) {
             return 1;
         }
+    }
+
+    // Single wait: the CPU blocks until copies, kernel and copies back are done.
+    // It also reports errors that happened while the kernel was running.
+    // The h_out_* arrays must not be read before this point.
+    if (!check(cudaStreamSynchronize(s), "Stream execution")) {
+        return 1;
     }
 
     // --- 8. Compare every trajectory to its analytical reference ---
