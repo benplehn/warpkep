@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <initializer_list>
 #include <iostream>
+#include <limits>
 
 namespace wd = warpkep::detail;
 
@@ -101,6 +102,33 @@ int main() {
         expected_states[i] = expected_cases[case_index];
     }
 
+    // --- Per-trajectory exceptions inside the same batch ---
+    // Valid neighbours must keep succeeding next to invalid trajectories.
+    using Status = wd::KeplerPropagationStatus;
+
+    std::array<Status, n> expected_statuses{};
+    expected_statuses.fill(Status::success);
+
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+
+    // Index 1: position at the origin -> invalid input.
+    initial_states[1].position = {0.0, 0.0, 0.0};
+    expected_statuses[1] = Status::invalid_input;
+
+    // Index 2: one velocity component is NaN -> invalid input.
+    initial_states[2].velocity[1] = nan;
+    expected_statuses[2] = Status::invalid_input;
+
+    // Index 3: zero duration on a valid state -> success, state unchanged.
+    durations[3] = 0.0;
+    expected_states[3] = initial_states[3];
+
+    // Index 256 (second block): velocity parallel to position, i.e. radial
+    // motion with a nonzero duration -> outside the supported domain.
+    initial_states[256] = State{{1.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
+    durations[256] = 1.0;
+    expected_statuses[256] = Status::unsupported_case;
+
     // --- 3. Split the states into six SoA arrays (h_ = host, CPU memory) ---
     std::array<double, n> h_r_x{}, h_r_y{}, h_r_z{};
     std::array<double, n> h_v_x{}, h_v_y{}, h_v_z{};
@@ -191,6 +219,27 @@ int main() {
     double max_velocity_error = 0.0;
 
     for (std::size_t i = 0; i < n; ++i) {
+        // Expected failure: check its status and its six NaN outputs,
+        // then move on (there is no reference state to compare to).
+        if (expected_statuses[i] != Status::success) {
+            const bool all_nan = std::isnan(h_out_r_x[i]) && std::isnan(h_out_r_y[i])
+                && std::isnan(h_out_r_z[i]) && std::isnan(h_out_v_x[i])
+                && std::isnan(h_out_v_y[i]) && std::isnan(h_out_v_z[i]);
+
+            const bool passed = h_statuses[i] == expected_statuses[i] && all_nan;
+
+            if (passed) {
+                ++passed_count;
+            } else {
+                std::cerr << "case " << i << " FAIL: expected="
+                          << wd::propagation_status_name(expected_statuses[i])
+                          << " actual=" << wd::propagation_status_name(h_statuses[i])
+                          << " all_nan=" << all_nan << '\n';
+            }
+            continue;
+        }
+
+        // Expected success: compare to the analytical reference.
         const auto& expected = expected_states[i];
 
         const double position_error = std::hypot(
@@ -205,7 +254,7 @@ int main() {
         );
 
         // isfinite first: a NaN error must fail, never pass silently.
-        const bool passed = h_statuses[i] == wd::KeplerPropagationStatus::success
+        const bool passed = h_statuses[i] == Status::success
             && std::isfinite(position_error) && std::isfinite(velocity_error)
             && position_error <= tolerance && velocity_error <= tolerance;
 
@@ -228,9 +277,9 @@ int main() {
               << ", max velocity error " << max_velocity_error << ")\n";
 
     if (passed_count != n) {
-        std::cerr << "GPU analytical checks failed\n";
+        std::cerr << "GPU mixed batch checks failed\n";
         return 1;
     }
-    std::cout << "GPU analytical checks passed\n";
+    std::cout << "GPU mixed batch checks passed\n";
     return 0;
 }
