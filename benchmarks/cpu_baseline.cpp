@@ -220,8 +220,10 @@ int main(int argc, char** argv) {
                   << std::fixed << std::setprecision(3)
                   << "Serial median: " << serial_seconds * 1000.0 << " ms\n"
                   << "Parallel median: " << parallel_seconds * 1000.0 << " ms\n"
-                  << "Serial throughput: " << static_cast<double>(count) / serial_seconds << " propagations/s\n"
-                  << "Parallel throughput: " << static_cast<double>(count) / parallel_seconds << " propagations/s\n"
+                  << "Serial throughput: " << static_cast<double>(count) / serial_seconds
+                  << " propagations/s\n"
+                  << "Parallel throughput: " << static_cast<double>(count) / parallel_seconds
+                  << " propagations/s\n"
                   << "Speedup: " << serial_seconds / parallel_seconds << "x\n";
         return 0;
     } catch (const std::exception& error) {

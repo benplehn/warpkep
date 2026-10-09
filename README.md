@@ -27,7 +27,7 @@ Expected output:
 
 ```text
 warpkep: CPU development environment ready
-warpkep version: 0.1.0-dev
+warpkep version: 0.1.0.dev0
 ```
 
 This builds the current C++ skeleton. It works on macOS without CUDA.

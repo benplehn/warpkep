@@ -45,4 +45,3 @@ inline StumpffValues stumpff(double z) {
 }
 
 } // namespace warpkep::detail
-    

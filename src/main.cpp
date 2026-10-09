@@ -1,9 +1,9 @@
-#include <iostream>
-#include<warpkep/version.hpp>
+#include <warpkep/version.hpp>
 
+#include <iostream>
 
 int main() {
-    std::cout << "warpkep: CPU development environment ready" << std::endl;
-    std::cout << "warpkep version: " << warpkep::version() << std::endl;
+    std::cout << "warpkep: CPU development environment ready\n";
+    std::cout << "warpkep version: " << warpkep::version() << '\n';
     return 0;
 }

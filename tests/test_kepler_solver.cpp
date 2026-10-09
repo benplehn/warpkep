@@ -37,7 +37,6 @@ int main() {
     constexpr double tolerance = 1e-13;
     std::cout << std::scientific << std::setprecision(3);
 
-    // Iterate over the test cases, solve the universal Kepler equation, and check the results against the expected roots.
     for (const auto& reference : cases) {
         const auto result = wd::solve_universal_kepler(reference.parameters);
         const double error = std::abs(result.chi - reference.expected_chi);

@@ -17,19 +17,15 @@ def compare(path, engine):
     if not samples:
         raise ValueError("No propagation samples provided")
 
-    propagate = (
-        propagate_pykep if engine == "pykep" else propagate_heyoka
-    )
+    propagate = propagate_pykep if engine == "pykep" else propagate_heyoka
 
-    # Absolute tolerances for these normalized test cases.
+    # Absolute tolerance for these normalized test cases.
     tolerance = 1e-12
     print(f"Reference: {engine} {version(engine)}", flush=True)
 
     for sample in samples:
         if sample["status"] != "success":
-            raise RuntimeError(
-                f"C++ propagation failed: {sample['name']}"
-            )
+            raise RuntimeError(f"C++ propagation failed: {sample['name']}")
 
         # JSON can decode components such as 0 and 1 as integers.
         r0 = [float(x) for x in sample["r0"]]
@@ -38,34 +34,18 @@ def compare(path, engine):
         mu = float(sample["mu"])
 
         ref_r, ref_v = propagate(r0, v0, dt, mu)
-
         errors = []
         for key, reference in (("r1", ref_r), ("v1", ref_v)):
             actual = np.asarray(sample[key], dtype=np.float64)
             reference = np.asarray(reference, dtype=np.float64)
-
             if actual.shape != (3,) or reference.shape != (3,):
-                raise ValueError(
-                    f"Invalid state shape: {sample['name']}"
-                )
-
+                raise ValueError(f"Invalid state shape: {sample['name']}")
             errors.append(float(np.linalg.norm(actual - reference)))
 
         error_r, error_v = errors
-        print(
-            f"  {sample['name']}: "
-            f"error_r={error_r:.3e}, error_v={error_v:.3e}",
-            flush=True,
-        )
-
-        if (
-            not np.all(np.isfinite(errors))
-            or error_r > tolerance
-            or error_v > tolerance
-        ):
-            raise AssertionError(
-                f"Reference comparison failed: {sample['name']}"
-            )
+        print(f"  {sample['name']}: error_r={error_r:.3e}, error_v={error_v:.3e}", flush=True)
+        if not np.all(np.isfinite(errors)) or error_r > tolerance or error_v > tolerance:
+            raise AssertionError(f"Reference comparison failed: {sample['name']}")
 
 
 def main():
@@ -87,22 +67,10 @@ def main():
     samples = str(args.samples.resolve())
 
     for run in range(args.repeat):
-        print(
-            f"Validation run {run + 1}/{args.repeat}",
-            flush=True,
-        )
-
+        print(f"Validation run {run + 1}/{args.repeat}", flush=True)
         for engine in ("pykep", "heyoka"):
             subprocess.run(
-                [
-                    sys.executable,
-                    "-X",
-                    "faulthandler",
-                    script,
-                    samples,
-                    "--engine",
-                    engine,
-                ],
+                [sys.executable, "-X", "faulthandler", script, samples, "--engine", engine],
                 check=True,
             )
 

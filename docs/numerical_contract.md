@@ -12,7 +12,6 @@ The API accepts any consistent system of units.
 
 For a length unit L and a time unit T:
 
-
 | Quantity                   | Unit    |
 | -------------------------- | ------- |
 | Position                   | L       |
@@ -29,6 +28,7 @@ The caller is responsible for unit consistency. warpkep does not infer units fro
 For two-body propagation, position and velocity are expressed in the same inertial frame, relative to the attracting body's centre.
 
 The caller supplies states in the required frame. warpkep does not perform implicit frame transformations and cannot detect a frame mismatch from raw arrays alone.
+
 Other dynamical models will specify their own frame conventions. The inertial-frame requirement above does not automatically apply to models defined in rotating frames.
 
 ## 3. Time
@@ -36,6 +36,7 @@ Other dynamical models will specify their own frame conventions. The inertial-fr
 Two-body propagation takes a relative duration dt, using the time unit associated with the state and mu.
 
 Absolute dates are handled outside this primitive. When converting absolute epochs to relative times, the caller must use compatible time scales and subtract the reference epoch before reducing numerical precision.
+
 After validating the inputs:
 
 * dt = 0 returns the initial state unchanged
@@ -67,6 +68,7 @@ Each numerical routine must state:
 * its iteration limits and termination criteria
 
 The universal-variable two-body propagator is intended to cover elliptic, parabolic and hyperbolic motion. Support for each domain will only be advertised once it has been validated.
+
 A known unsupported case must be distinguished from a failed solve. Non-convergence is not evidence that a physical solution does not exist.
 
 ## 6. Precision and scaling
@@ -74,6 +76,7 @@ A known unsupported case must be distinguished from a failed solve. Non-converge
 The first numerical implementation and its validation use double precision. The initial Python numerical API will require float64 inputs.
 
 No silent conversion from float64 to float32 is allowed. Any convenience conversion must be explicit and documented.
+
 Internal scaling may improve conditioning and avoid overflow or underflow. Its definition and effect on tolerances must be documented. Scaling does not recover information already lost through rounding.
 
 Float32 filtering and mixed precision remain experimental until their errors have been measured. Candidate-selection experiments must also measure false negatives: reevaluating retained candidates in float64 cannot recover good candidates discarded by a float32 filter.
@@ -83,7 +86,6 @@ Fast-math transformations are disabled in the validation baseline. Any alternati
 ## 7. Result statuses
 
 Numerical routines return an explicit status for each trajectory.
-
 
 | Status             | Meaning                                                                                                 |
 | ------------------ | ------------------------------------------------------------------------------------------------------- |
@@ -123,6 +125,7 @@ For N trajectories, Cartesian states use six contiguous one-dimensional arrays:
 The initial design uses one shared mu and an array of N relative durations. Output states use the same layout, with N result statuses.
 
 Component ordering and any future representation of augmented states, such as mass or a state-transition matrix, must be documented explicitly.
+
 The GPU interface operates on data already resident on the selected device. It performs no implicit host-device transfers.
 
 A structurally valid empty batch is a no-op and launches no computation.
@@ -134,6 +137,7 @@ The caller owns input and output arrays. The library borrows their storage for t
 Outputs can be preallocated and reused. Required sizes, alignment constraints and temporary workspace requirements must be documented.
 
 Input and output storage must not overlap. Output component arrays must also be mutually disjoint. In-place operation is unsupported unless a particular routine explicitly documents it.
+
 For asynchronous operations, the caller must keep all borrowed storage alive and avoid conflicting access until completion.
 
 The CPU interface completes its computation before returning. The CUDA batch interface may return before device execution finishes.
@@ -143,6 +147,7 @@ The CPU interface completes its computation before returning. The CUDA batch int
 The CUDA batch interface accepts a stream supplied by the caller. Work is submitted to that stream.
 
 The interface does not implicitly synchronize the whole device. Any operation that waits for completion must document that behaviour.
+
 The caller must establish dependencies before reading outputs or reusing their storage from another stream. Events or explicit synchronization may be used to order these operations.
 
 Sharing memory through an interoperability protocol such as DLPack does not, on its own, establish execution ordering. Each Python adapter must document how it handles producer and consumer streams.
@@ -152,9 +157,11 @@ Immediate submission errors and asynchronous execution errors are distinct. The 
 ## 12. Tolerances and determinism
 
 Tolerances must identify the quantity they constrain and whether they are absolute, relative or applied to a normalized residual.
+
 Position and velocity acceptance tolerances are expressed in the caller's corresponding units. Solver-residual tolerances require their own explicit definition.
 
 Default values will be selected using validation cases before a numerical routine is released. This initial contract deliberately does not assign unmeasured tolerance values.
+
 For a fixed implementation, arithmetic configuration and supported execution environment, results must be reproducible. Bitwise equality is not promised across CPU and GPU, different architectures or different compiler versions.
 
 Numerical comparisons use documented tolerances. Future sequence-search routines must define deterministic tie-breaking and use a stable candidate identifier when scores are equal.
@@ -181,5 +188,7 @@ Asynchronous GPU work is timed using a procedure that accounts for completion. T
 ## 14. Changes to this contract
 
 This document describes intended behaviour until the first numerical prototype is available.
+
 The prototype may reveal necessary API changes. Such changes must be reflected here, with corresponding validation and migration notes where they affect users.
+
 Implemented behaviour, demonstrated support and experimental features must remain distinguishable in the documentation.

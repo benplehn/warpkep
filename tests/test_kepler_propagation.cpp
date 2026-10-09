@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -44,12 +45,12 @@ int main() {
     constexpr double tolerance = 1e-12; // These normalized analytical cases only.
     std::cout << std::scientific << std::setprecision(3);
     for (const auto& reference : cases) {
-        const auto result = wd::propagate_kepler_cpu(
-            reference.initial, reference.dt, reference.mu
-        );
+        const auto result =
+            wd::propagate_kepler_cpu(reference.initial, reference.dt, reference.mu);
         const double er = distance(result.state.position, reference.expected.position);
         const double ev = distance(result.state.velocity, reference.expected.velocity);
-        std::cout << reference.name << ": status=" << wd::propagation_status_name(result.status)
+        std::cout << reference.name
+                  << ": status=" << wd::propagation_status_name(result.status)
                   << " error_r=" << er << " error_v=" << ev << '\n';
         if (result.status != wd::KeplerPropagationStatus::success
             || !std::isfinite(er) || !std::isfinite(ev)
@@ -63,28 +64,35 @@ int main() {
         wd::KeplerPropagationStatus expected
     ) {
         bool matches = result.status == expected;
-        for (int i = 0; i < 3; ++i) {
+        for (std::size_t i = 0; i < 3; ++i) {
             matches = matches && std::isnan(result.state.position[i])
                       && std::isnan(result.state.velocity[i]);
         }
         std::cout << name << ": " << (matches ? "passed" : "FAILED") << '\n';
         passed = passed && matches;
     };
-    expect_failure("zero radius", wd::propagate_kepler_cpu({{0, 0, 0}, {0, 1, 0}}, 1, 1),
-                   wd::KeplerPropagationStatus::invalid_input);
-    expect_failure("invalid mu at zero duration", wd::propagate_kepler_cpu({{1, 0, 0}, {0, 1, 0}}, 0, -1),
-                   wd::KeplerPropagationStatus::invalid_input);
     const double nan = std::numeric_limits<double>::quiet_NaN();
-    expect_failure("nonfinite state", wd::propagate_kepler_cpu({{1, 0, 0}, {0, nan, 0}}, 1, 1),
-                   wd::KeplerPropagationStatus::invalid_input);
-    expect_failure("radial trajectory", wd::propagate_kepler_cpu({{1, 0, 0}, {0.2, 0, 0}}, 1, 1),
-                   wd::KeplerPropagationStatus::unsupported_case);
-    expect_failure("zero velocity", wd::propagate_kepler_cpu({{1, 0, 0}, {0, 0, 0}}, 1, 1),
-                   wd::KeplerPropagationStatus::unsupported_case);
+    expect_failure("zero radius",
+        wd::propagate_kepler_cpu({{0, 0, 0}, {0, 1, 0}}, 1, 1),
+        wd::KeplerPropagationStatus::invalid_input);
+    expect_failure("invalid mu at zero duration",
+        wd::propagate_kepler_cpu({{1, 0, 0}, {0, 1, 0}}, 0, -1),
+        wd::KeplerPropagationStatus::invalid_input);
+    expect_failure("nonfinite state",
+        wd::propagate_kepler_cpu({{1, 0, 0}, {0, nan, 0}}, 1, 1),
+        wd::KeplerPropagationStatus::invalid_input);
+    expect_failure("radial trajectory",
+        wd::propagate_kepler_cpu({{1, 0, 0}, {0.2, 0, 0}}, 1, 1),
+        wd::KeplerPropagationStatus::unsupported_case);
+    expect_failure("zero velocity",
+        wd::propagate_kepler_cpu({{1, 0, 0}, {0, 0, 0}}, 1, 1),
+        wd::KeplerPropagationStatus::unsupported_case);
+
     wd::KeplerSolveOptions limited;
     limited.max_iterations = 1;
-    expect_failure("iteration limit", wd::propagate_kepler_cpu({{1.5, 0.1, -0.2}, {-0.15, 0.6, 0.25}}, 1.7, 1, limited),
-                   wd::KeplerPropagationStatus::not_converged);
+    expect_failure("iteration limit",
+        wd::propagate_kepler_cpu({{1.5, 0.1, -0.2}, {-0.15, 0.6, 0.25}}, 1.7, 1, limited),
+        wd::KeplerPropagationStatus::not_converged);
 
     if (!passed) {
         std::cerr << "Kepler propagation checks failed.\n";
