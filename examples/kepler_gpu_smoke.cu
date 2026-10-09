@@ -58,8 +58,8 @@ bool check(cudaError_t error, const char* what) {
 }
 
 // Enqueues a copy of a CPU std::array into a GPU DeviceArray of the same size.
-// Asynchronous: the copy is only guaranteed complete after synchronizing the
-// stream, so `src` must stay alive and unchanged until then.
+// Ordinary host memory may make this call block the CPU. Keep `src` alive
+// and unchanged until completion; this test waits by synchronizing the stream.
 template <typename T, std::size_t N>
 cudaError_t copy_to_gpu(DeviceArray<T>& dst, const std::array<T, N>& src, cudaStream_t stream) {
     return cudaMemcpyAsync(
@@ -68,7 +68,8 @@ cudaError_t copy_to_gpu(DeviceArray<T>& dst, const std::array<T, N>& src, cudaSt
 }
 
 // Enqueues a copy of a GPU DeviceArray back into a CPU std::array.
-// `dst` must not be read before the stream has been synchronized.
+// Keep `dst` alive and do not access it until completion. This test waits
+// by synchronizing the stream. Ordinary host memory may block the CPU.
 template <typename T, std::size_t N>
 cudaError_t copy_to_cpu(std::array<T, N>& dst, const DeviceArray<T>& src, cudaStream_t stream) {
     return cudaMemcpyAsync(
@@ -197,7 +198,8 @@ int main() {
 
     // Everything below goes into ONE queue, in this order:
     //   input copies -> kernel -> output copies -> single final wait.
-    // The stream itself guarantees the order: no intermediate CPU wait.
+    // The stream guarantees the order: no explicit intermediate wait.
+    // Copies involving ordinary host memory may still block the CPU.
     const cudaStream_t s = stream.handle;
 
     // --- 5. Enqueue the input copies (CPU -> GPU) ---
@@ -207,6 +209,8 @@ int main() {
              copy_to_gpu(d_v_y, h_v_y, s), copy_to_gpu(d_v_z, h_v_z, s),
              copy_to_gpu(d_durations, durations, s)}) {
         if (!check(error, "Copy to GPU")) {
+            // Keep host buffers alive until queued operations finish.
+            check(cudaStreamSynchronize(s), "Stream cleanup");
             return 1;
         }
     }
@@ -224,6 +228,7 @@ int main() {
                    input, d_durations.ptr, 1.0, output,
                    d_statuses.ptr, d_iterations.ptr, n, s),
                "Kernel launch")) {
+        check(cudaStreamSynchronize(s), "Stream cleanup");
         return 1;
     }
 
@@ -240,6 +245,8 @@ int main() {
              copy_to_cpu(h_statuses, d_statuses, s),
              copy_to_cpu(h_iterations, d_iterations, s)}) {
         if (!check(error, "Copy to CPU")) {
+            // Keep host buffers alive until queued operations finish.
+            check(cudaStreamSynchronize(s), "Stream cleanup");
             return 1;
         }
     }
