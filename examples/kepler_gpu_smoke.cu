@@ -180,13 +180,47 @@ int main() {
         }
     }
 
-    // Temporary display, replaced by the comparison in step 8.
+    // Absolute tolerance for these three cases in normalized units.
+    constexpr double tolerance = 1e-12;
+    bool all_passed = true;
+
     for (std::size_t i = 0; i < n; ++i) {
-        std::cout << "case " << i << ": " << wd::propagation_status_name(h_statuses[i])
-                  << " r=(" << h_out_r_x[i] << ", " << h_out_r_y[i] << ", " << h_out_r_z[i]
-                  << ") v=(" << h_out_v_x[i] << ", " << h_out_v_y[i] << ", " << h_out_v_z[i]
-                  << ") iterations=" << h_iterations[i] << '\n';
+        const auto& expected = expected_states[i];
+
+        const double position_error = std::hypot(
+            h_out_r_x[i] - expected.position[0],
+            h_out_r_y[i] - expected.position[1],
+            h_out_r_z[i] - expected.position[2]
+        );
+
+        const double velocity_error = std::hypot(
+            h_out_v_x[i] - expected.velocity[0],
+            h_out_v_y[i] - expected.velocity[1],
+            h_out_v_z[i] - expected.velocity[2]
+        );
+
+        const bool passed =
+            h_statuses[i] == wd::KeplerPropagationStatus::success
+            && std::isfinite(position_error)
+            && std::isfinite(velocity_error)
+            && position_error <= tolerance
+            && velocity_error <= tolerance;
+
+        std::cout << "case " << i
+                << ": " << (passed ? "PASS" : "FAIL")
+                << " status=" << wd::propagation_status_name(h_statuses[i])
+                << " position_error=" << position_error
+                << " velocity_error=" << velocity_error
+                << " iterations=" << h_iterations[i] << '\n';
+
+        all_passed = all_passed && passed;
     }
 
+    if (!all_passed) {
+        std::cerr << "GPU analytical checks failed\n";
+        return 1;
+    }
+
+    std::cout << "GPU analytical checks passed\n";
     return 0;
 }
