@@ -1,13 +1,12 @@
 #include "kepler_launch.hpp"
 
-#include <initializer_list>
 #include <array>
 #include <cmath>
-#include <iostream>
 #include <cstddef>
+#include <initializer_list>
+#include <iostream>
 
 namespace wd = warpkep::detail;
-
 
 // Owns one GPU array of `count` elements and frees it automatically
 // when the variable goes out of scope (end of main or early return).
@@ -27,7 +26,6 @@ struct DeviceArray {
     DeviceArray(const DeviceArray&) = delete;
     DeviceArray& operator=(const DeviceArray&) = delete;
 };
-
 
 // Prints a readable message if a CUDA call failed.
 bool check(cudaError_t error, const char* what) {
@@ -61,42 +59,51 @@ int main() {
     }
     std::cout << "Empty batch passed\n";
 
-    // --- Test 2: three analytical cases, mu = 1 ---
+    // --- Test 2: analytical cases, mu = 1 ---
     using State = wd::CartesianState<double>;
     const double pi = std::acos(-1.0);
     const double sqrt3 = std::sqrt(3.0);
 
-    // Initial states: {position}, {velocity}.
-    const std::array<State, 3> initial_states{
+    // The three reference cases: {position}, {velocity}.
+    const std::array<State, 3> initial_cases{
         State{{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}},   // circle forward
         State{{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}},   // circle backward
         State{{0.5, 0.0, 0.0}, {0.0, sqrt3, 0.0}}  // ellipse a = 1, e = 0.5
     };
 
-    // Propagation duration of each case.
-    const std::array<double, 3> durations{
+    // Propagation duration of each reference case.
+    const std::array<double, 3> duration_cases{
         pi / 2.0,   // quarter turn forward
         -pi / 2.0,  // quarter turn backward
         pi          // half period: periapsis -> apoapsis
     };
 
-    // Analytical references after propagation.
-    const std::array<State, 3> expected_states{
+    // Analytical result of each reference case.
+    const std::array<State, 3> expected_cases{
         State{{0.0, 1.0, 0.0}, {-1.0, 0.0, 0.0}},
         State{{0.0, -1.0, 0.0}, {1.0, 0.0, 0.0}},
         State{{-1.5, 0.0, 0.0}, {0.0, -1.0 / sqrt3, 0.0}}
     };
 
+    // 257 trajectories = 2 blocks of 256 threads: the second block has a
+    // single active thread, the other 255 must exit through `if (i >= n)`.
+    constexpr std::size_t n = 257;
 
-    constexpr std::size_t n = 3;
+    std::array<State, n> initial_states{};
+    std::array<double, n> durations{};
+    std::array<State, n> expected_states{};
 
-    // h_ means  « host » : CPU memory
-    std::array<double, n> h_r_x{};
-    std::array<double, n> h_r_y{};
-    std::array<double, n> h_r_z{};
-    std::array<double, n> h_v_x{};
-    std::array<double, n> h_v_y{};
-    std::array<double, n> h_v_z{};
+    // Repeat the three cases: case_index = 0, 1, 2, 0, 1, 2, ...
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::size_t case_index = i % initial_cases.size();
+        initial_states[i] = initial_cases[case_index];
+        durations[i] = duration_cases[case_index];
+        expected_states[i] = expected_cases[case_index];
+    }
+
+    // --- 3. Split the states into six SoA arrays (h_ = host, CPU memory) ---
+    std::array<double, n> h_r_x{}, h_r_y{}, h_r_z{};
+    std::array<double, n> h_v_x{}, h_v_y{}, h_v_z{};
 
     for (std::size_t i = 0; i < n; ++i) {
         h_r_x[i] = initial_states[i].position[0];
@@ -107,8 +114,7 @@ int main() {
         h_v_z[i] = initial_states[i].velocity[2];
     }
 
-
-    // d_ means "device": GPU memory.
+    // --- 4. Allocate the GPU arrays (d_ = device, GPU memory) ---
     DeviceArray<double> d_r_x(n), d_r_y(n), d_r_z(n);
     DeviceArray<double> d_v_x(n), d_v_y(n), d_v_z(n);
     DeviceArray<double> d_durations(n);
@@ -118,20 +124,17 @@ int main() {
     DeviceArray<int> d_iterations(n);
 
     for (const cudaError_t error : {
-            d_r_x.error, d_r_y.error, d_r_z.error, d_v_x.error, d_v_y.error,
-            d_v_z.error, d_durations.error, d_out_r_x.error, d_out_r_y.error,
-            d_out_r_z.error, d_out_v_x.error, d_out_v_y.error, d_out_v_z.error,
-            d_statuses.error, d_iterations.error}) {
-        if (error != cudaSuccess) {
-            std::cerr << "GPU allocation failed: " << cudaGetErrorString(error) << '\n';
+             d_r_x.error, d_r_y.error, d_r_z.error, d_v_x.error, d_v_y.error,
+             d_v_z.error, d_durations.error, d_out_r_x.error, d_out_r_y.error,
+             d_out_r_z.error, d_out_v_x.error, d_out_v_y.error, d_out_v_z.error,
+             d_statuses.error, d_iterations.error}) {
+        if (!check(error, "GPU allocation")) {
             return 1;
         }
     }
     std::cout << "GPU allocation passed\n";
 
-
-
-       // --- 5. Copy the inputs from CPU to GPU ---
+    // --- 5. Copy the inputs from CPU to GPU ---
     for (const cudaError_t error : {
              copy_to_gpu(d_r_x, h_r_x), copy_to_gpu(d_r_y, h_r_y),
              copy_to_gpu(d_r_z, h_r_z), copy_to_gpu(d_v_x, h_v_x),
@@ -180,9 +183,12 @@ int main() {
         }
     }
 
-    // Absolute tolerance for these three cases in normalized units.
+    // --- 8. Compare every trajectory to its analytical reference ---
+    // Absolute tolerance for these cases in normalized units.
     constexpr double tolerance = 1e-12;
-    bool all_passed = true;
+    std::size_t passed_count = 0;
+    double max_position_error = 0.0;
+    double max_velocity_error = 0.0;
 
     for (std::size_t i = 0; i < n; ++i) {
         const auto& expected = expected_states[i];
@@ -192,35 +198,39 @@ int main() {
             h_out_r_y[i] - expected.position[1],
             h_out_r_z[i] - expected.position[2]
         );
-
         const double velocity_error = std::hypot(
             h_out_v_x[i] - expected.velocity[0],
             h_out_v_y[i] - expected.velocity[1],
             h_out_v_z[i] - expected.velocity[2]
         );
 
-        const bool passed =
-            h_statuses[i] == wd::KeplerPropagationStatus::success
-            && std::isfinite(position_error)
-            && std::isfinite(velocity_error)
-            && position_error <= tolerance
-            && velocity_error <= tolerance;
+        // isfinite first: a NaN error must fail, never pass silently.
+        const bool passed = h_statuses[i] == wd::KeplerPropagationStatus::success
+            && std::isfinite(position_error) && std::isfinite(velocity_error)
+            && position_error <= tolerance && velocity_error <= tolerance;
 
-        std::cout << "case " << i
-                << ": " << (passed ? "PASS" : "FAIL")
-                << " status=" << wd::propagation_status_name(h_statuses[i])
-                << " position_error=" << position_error
-                << " velocity_error=" << velocity_error
-                << " iterations=" << h_iterations[i] << '\n';
-
-        all_passed = all_passed && passed;
+        if (passed) {
+            ++passed_count;
+            max_position_error = std::fmax(max_position_error, position_error);
+            max_velocity_error = std::fmax(max_velocity_error, velocity_error);
+        } else {
+            // Only failures are detailed, to keep the output readable.
+            std::cerr << "case " << i << " FAIL"
+                      << " status=" << wd::propagation_status_name(h_statuses[i])
+                      << " position_error=" << position_error
+                      << " velocity_error=" << velocity_error
+                      << " iterations=" << h_iterations[i] << '\n';
+        }
     }
 
-    if (!all_passed) {
+    std::cout << passed_count << " / " << n << " trajectories passed"
+              << " (max position error " << max_position_error
+              << ", max velocity error " << max_velocity_error << ")\n";
+
+    if (passed_count != n) {
         std::cerr << "GPU analytical checks failed\n";
         return 1;
     }
-
     std::cout << "GPU analytical checks passed\n";
     return 0;
 }
