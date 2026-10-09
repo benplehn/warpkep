@@ -11,7 +11,7 @@ namespace wd = warpkep::detail;
 
 struct Sample {
     const char* name;
-    wd::CartesianState initial;
+    wd::CartesianState<double> initial;
     double dt;
     double mu;
 };

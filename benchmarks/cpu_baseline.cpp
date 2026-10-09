@@ -19,7 +19,7 @@ using warpkep::detail::KeplerPropagationResult;
 using warpkep::detail::KeplerPropagationStatus;
 
 struct Input {
-    CartesianState state;
+    CartesianState<double> state;
     double dt;
 };
 
@@ -54,11 +54,11 @@ std::vector<Input> make_inputs(std::size_t count) {
 // Each call writes only [begin, end); inputs are shared read-only.
 void propagate_range(
     const std::vector<Input>& inputs,
-    std::vector<KeplerPropagationResult>& outputs,
+    std::vector<KeplerPropagationResult<double>>& outputs,
     std::size_t begin, std::size_t end
 ) {
     for (std::size_t i = begin; i < end; ++i) {
-        outputs[i] = warpkep::detail::propagate_kepler_cpu(
+        outputs[i] = warpkep::detail::propagate_kepler_cpu<double>(
             inputs[i].state, inputs[i].dt, 1.0
         );
     }
@@ -66,7 +66,7 @@ void propagate_range(
 
 void run_batch(
     const std::vector<Input>& inputs,
-    std::vector<KeplerPropagationResult>& outputs,
+    std::vector<KeplerPropagationResult<double>>& outputs,
     std::size_t thread_count
 ) {
     if (thread_count == 1) {
@@ -105,8 +105,8 @@ void run_batch(
 }
 
 void check_results(
-    const std::vector<KeplerPropagationResult>& serial,
-    const std::vector<KeplerPropagationResult>& parallel
+    const std::vector<KeplerPropagationResult<double>>& serial,
+    const std::vector<KeplerPropagationResult<double>>& parallel
 ) {
     for (std::size_t i = 0; i < serial.size(); ++i) {
         const auto& a = serial[i];
@@ -132,7 +132,7 @@ void check_results(
 
 double measure(
     const std::vector<Input>& inputs,
-    std::vector<KeplerPropagationResult>& outputs,
+    std::vector<KeplerPropagationResult<double>>& outputs,
     std::size_t threads
 ) {
     const auto start = std::chrono::steady_clock::now();
@@ -179,7 +179,7 @@ int main(int argc, char** argv) {
         }
 
         const auto inputs = make_inputs(count);
-        std::vector<KeplerPropagationResult> serial(count), parallel(count);
+        std::vector<KeplerPropagationResult<double>> serial(count), parallel(count);
         std::vector<double> serial_times, parallel_times;
         serial_times.reserve(repeats);
         parallel_times.reserve(repeats);

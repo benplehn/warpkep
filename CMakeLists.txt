@@ -76,6 +76,11 @@ if(BUILD_TESTING)
     target_link_libraries(warpkep_test_kepler_propagation PRIVATE warpkep)
     add_test(NAME kepler_propagation COMMAND warpkep_test_kepler_propagation)
 
+
+    add_executable(warpkep_test_kepler_precision tests/test_kepler_precision.cpp)
+    target_link_libraries(warpkep_test_kepler_precision PRIVATE warpkep)
+    add_test(NAME kepler_precision COMMAND warpkep_test_kepler_precision)
+
     add_executable(warpkep_cpu_samples validation/cpu_propagation_samples.cpp)
     target_link_libraries(warpkep_cpu_samples PRIVATE warpkep)
 endif()

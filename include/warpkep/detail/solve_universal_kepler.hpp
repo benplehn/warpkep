@@ -7,54 +7,49 @@
 
 namespace warpkep::detail {
 
-enum class KeplerSolveStatus {
-    success,
-    invalid_input,
-    not_converged,
-    numerical_failure
-};
+enum class KeplerSolveStatus { success, invalid_input, not_converged, numerical_failure };
 
+template <typename T>
 struct KeplerSolveOptions {
     int max_iterations = 64;
-    double relative_tolerance = 8.0 * std::numeric_limits<double>::epsilon();
+    T relative_tolerance = T{8} * std::numeric_limits<T>::epsilon();
 };
 
+template <typename T>
 struct KeplerSolveResult {
     KeplerSolveStatus status;
-    double chi;
+    T chi;
     int iterations;
 };
 
 // Internal CPU prototype. The stopping tolerance applies to the equation
 // residual relative to sqrt(mu) * abs(dt), not to position or velocity errors.
 // Physically consistent parameters are derived from a validated Cartesian state.
-inline KeplerSolveResult solve_universal_kepler(
-    const UniversalKeplerParameters& p,
-    const KeplerSolveOptions& options = {}
+template <typename T>
+inline KeplerSolveResult<T> solve_universal_kepler(
+    const UniversalKeplerParameters<T>& p, const KeplerSolveOptions<T>& options = {}
 ) {
-    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const T nan = std::numeric_limits<T>::quiet_NaN();
 
-    if (!std::isfinite(p.radius0) || p.radius0 <= 0.0
-        || !std::isfinite(p.r0_dot_v0) || !std::isfinite(p.alpha)
-        || !std::isfinite(p.sqrt_mu) || p.sqrt_mu <= 0.0
+    if (!std::isfinite(p.radius0) || p.radius0 <= T{0} || !std::isfinite(p.r0_dot_v0)
+        || !std::isfinite(p.alpha) || !std::isfinite(p.sqrt_mu) || p.sqrt_mu <= T{0}
         || !std::isfinite(p.dt) || options.max_iterations <= 0
-        || !std::isfinite(options.relative_tolerance)
-        || options.relative_tolerance <= 0.0) {
+        || !std::isfinite(options.relative_tolerance) || options.relative_tolerance <= T{0}) {
         return {KeplerSolveStatus::invalid_input, nan, 0};
     }
 
-    if (p.dt == 0.0) {
-        return {KeplerSolveStatus::success, 0.0, 0};
+    if (p.dt == T{0}) {
+        return {KeplerSolveStatus::success, T{0}, 0};
     }
 
-    const double direction = p.dt > 0.0 ? 1.0 : -1.0;
-    const double target = p.sqrt_mu * std::abs(p.dt);
-    const double tolerance = options.relative_tolerance * target;
-    double lower = 0.0;
-    double upper = target / p.radius0;
+    const T direction = p.dt > T{0} ? T{1} : T{-1};
+    const T target = p.sqrt_mu * std::abs(p.dt);
+    const T tolerance = options.relative_tolerance * target;
+    T lower = T{0};
+    T upper = target / p.radius0;
 
-    if (!std::isfinite(target) || !std::isfinite(tolerance)
-        || !std::isfinite(upper) || upper <= 0.0) {
+    if (!std::isfinite(target) || !std::isfinite(tolerance) || !std::isfinite(upper)
+        || upper <= T{0}) {
         return {KeplerSolveStatus::numerical_failure, nan, 0};
     }
 
@@ -62,20 +57,19 @@ inline KeplerSolveResult solve_universal_kepler(
     bool bracket_found = false;
     for (int expansion = 0; expansion < 64; ++expansion) {
         const auto evaluation = evaluate_universal_kepler(direction * upper, p);
-        if (!std::isfinite(evaluation.value)
-            || !std::isfinite(evaluation.derivative)
-            || evaluation.derivative <= 0.0) {
+        if (!std::isfinite(evaluation.value) || !std::isfinite(evaluation.derivative)
+            || evaluation.derivative <= T{0}) {
             return {KeplerSolveStatus::numerical_failure, nan, 0};
         }
         if (std::abs(evaluation.value) <= tolerance) {
             return {KeplerSolveStatus::success, direction * upper, 0};
         }
-        if (direction * evaluation.value > 0.0) {
+        if (direction * evaluation.value > T{0}) {
             bracket_found = true;
             break;
         }
         lower = upper;
-        upper *= 2.0;
+        upper *= T{2};
         if (!std::isfinite(upper)) {
             return {KeplerSolveStatus::numerical_failure, nan, 0};
         }
@@ -85,29 +79,27 @@ inline KeplerSolveResult solve_universal_kepler(
         return {KeplerSolveStatus::not_converged, nan, 0};
     }
 
-    double x = lower + 0.5 * (upper - lower);
+    T x = lower + (upper - lower) / T{2};
     for (int iteration = 1; iteration <= options.max_iterations; ++iteration) {
         const auto evaluation = evaluate_universal_kepler(direction * x, p);
-        if (!std::isfinite(evaluation.value)
-            || !std::isfinite(evaluation.derivative)
-            || evaluation.derivative <= 0.0) {
+        if (!std::isfinite(evaluation.value) || !std::isfinite(evaluation.derivative)
+            || evaluation.derivative <= T{0}) {
             return {KeplerSolveStatus::numerical_failure, nan, iteration};
         }
         if (std::abs(evaluation.value) <= tolerance) {
             return {KeplerSolveStatus::success, direction * x, iteration};
         }
 
-        const double value = direction * evaluation.value;
-        if (value < 0.0) {
+        const T value = direction * evaluation.value;
+        if (value < T{0}) {
             lower = x;
         } else {
             upper = x;
         }
 
-        double candidate = x - value / evaluation.derivative;
-        if (!std::isfinite(candidate) || candidate < lower || candidate > upper
-            || candidate == x) {
-            candidate = lower + 0.5 * (upper - lower);
+        T candidate = x - value / evaluation.derivative;
+        if (!std::isfinite(candidate) || candidate < lower || candidate > upper || candidate == x) {
+            candidate = lower + (upper - lower) / T{2};
         }
         if (candidate == x) {
             return {KeplerSolveStatus::not_converged, nan, iteration};
