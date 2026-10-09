@@ -48,6 +48,23 @@ if(WARPKEP_ENABLE_CUDA)
     )
 
     target_link_libraries(warpkep_cuda_compile_smoke PRIVATE warpkep)
+
+
+    add_executable(warpkep_gpu_smoke
+    examples/kepler_gpu_smoke.cu
+    )
+
+    target_link_libraries(warpkep_gpu_smoke PRIVATE
+        warpkep
+        warpkep_cuda_compile_smoke
+    )
+
+    set_target_properties(warpkep_gpu_smoke PROPERTIES
+        CUDA_STANDARD 17
+        CUDA_STANDARD_REQUIRED ON
+        CUDA_EXTENSIONS OFF
+    )
+
 endif()
 
 option(WARPKEP_BUILD_BENCHMARKS "Build CPU benchmarks" OFF)
