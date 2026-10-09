@@ -46,6 +46,8 @@ if(WARPKEP_ENABLE_CUDA)
         CUDA_STANDARD_REQUIRED ON
         CUDA_EXTENSIONS OFF
     )
+
+    target_link_libraries(warpkep_cuda_compile_smoke PRIVATE warpkep)
 endif()
 
 option(WARPKEP_BUILD_BENCHMARKS "Build CPU benchmarks" OFF)

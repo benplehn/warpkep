@@ -1,9 +1,9 @@
 #pragma once
 
 #include <warpkep/detail/universal_kepler.hpp>
-
+#include <warpkep/detail/config.hpp>
 #include <cmath>
-#include <limits>
+#include <warpkep/detail/numeric_limits.hpp>
 
 namespace warpkep::detail {
 
@@ -12,7 +12,7 @@ enum class KeplerSolveStatus { success, invalid_input, not_converged, numerical_
 template <typename T>
 struct KeplerSolveOptions {
     int max_iterations = 64;
-    T relative_tolerance = T{8} * std::numeric_limits<T>::epsilon();
+    T relative_tolerance = T{8} * NumericLimits<T>::epsilon();
 };
 
 template <typename T>
@@ -26,10 +26,10 @@ struct KeplerSolveResult {
 // residual relative to sqrt(mu) * abs(dt), not to position or velocity errors.
 // Physically consistent parameters are derived from a validated Cartesian state.
 template <typename T>
-inline KeplerSolveResult<T> solve_universal_kepler(
+WARPKEP_HD inline KeplerSolveResult<T> solve_universal_kepler(
     const UniversalKeplerParameters<T>& p, const KeplerSolveOptions<T>& options = {}
 ) {
-    const T nan = std::numeric_limits<T>::quiet_NaN();
+    const T nan = NumericLimits<T>::quiet_NaN();
 
     if (!std::isfinite(p.radius0) || p.radius0 <= T{0} || !std::isfinite(p.r0_dot_v0)
         || !std::isfinite(p.alpha) || !std::isfinite(p.sqrt_mu) || p.sqrt_mu <= T{0}

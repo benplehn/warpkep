@@ -1,8 +1,10 @@
 #pragma once
 
 #include <warpkep/detail/solve_universal_kepler.hpp>
-
-#include <array>
+#include <warpkep/detail/numeric_limits.hpp>
+#include <warpkep/detail/config.hpp>
+#include <warpkep/detail/vector3.hpp>
+#include <warpkep/detail/math.hpp>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -13,8 +15,8 @@ namespace warpkep::detail {
 // std::array has a fixed size known at compile time: no dynamic allocation.
 template <typename T>
 struct CartesianState {
-    std::array<T, 3> position;
-    std::array<T, 3> velocity;
+    Vector3<T> position;
+    Vector3<T> velocity;
 };
 
 // Outcome of a propagation. enum class values must be written with their
@@ -55,9 +57,9 @@ struct KeplerPropagationResult {
 // Failed states are filled with NaN.
 // The status remains the authoritative indication of failure.
 template <typename T>
-inline KeplerPropagationResult<T>
+WARPKEP_HD inline KeplerPropagationResult<T>
 kepler_failure(KeplerPropagationStatus status, int iterations = 0) {
-    const T nan = std::numeric_limits<T>::quiet_NaN();
+    const T nan = NumericLimits<T>::quiet_NaN();
     return {{{nan, nan, nan}, {nan, nan, nan}}, status, iterations};
 }
 
@@ -71,7 +73,7 @@ kepler_failure(KeplerPropagationStatus status, int iterations = 0) {
 // Radial motion is deliberately outside this prototype's supported domain.
 // Extended-domain validation and tuning are still required.
 template <typename T>
-inline KeplerPropagationResult<T> propagate_kepler_cpu(
+WARPKEP_HD inline KeplerPropagationResult<T> propagate_kepler_cpu(
     const CartesianState<T>& initial, T dt, T mu, const KeplerSolveOptions<T>& options = {}
 ) {
     using Status = KeplerPropagationStatus; // Local shorthand.
@@ -105,8 +107,8 @@ inline KeplerPropagationResult<T> propagate_kepler_cpu(
     const auto& v = initial.velocity;
 
     // hypot computes sqrt(x^2 + y^2 + z^2) without intermediate overflow.
-    const T radius0 = std::hypot(r[0], r[1], r[2]);
-    const T speed0 = std::hypot(v[0], v[1], v[2]);
+    const T radius0 = norm3(r[0], r[1], r[2]);
+    const T speed0 = norm3(v[0], v[1], v[2]);
     if (!std::isfinite(radius0) || !std::isfinite(speed0)) {
         return kepler_failure<T>(Status::numerical_failure);
     }
@@ -117,9 +119,9 @@ inline KeplerPropagationResult<T> propagate_kepler_cpu(
     // Radial check: if r and v are parallel, |r x v| = 0 and the universal
     // formulation is not supported here.
     // Scale before the cross product to avoid overflow in the radial check.
-    const std::array<T, 3> ur{r[0] / radius0, r[1] / radius0, r[2] / radius0};
-    const std::array<T, 3> uv{v[0] / speed0, v[1] / speed0, v[2] / speed0};
-    const T cross_norm = std::hypot(
+    const Vector3<T> ur{r[0] / radius0, r[1] / radius0, r[2] / radius0};
+    const Vector3<T> uv{v[0] / speed0, v[1] / speed0, v[2] / speed0};
+    const T cross_norm = norm3(
         ur[1] * uv[2] - ur[2] * uv[1], ur[2] * uv[0] - ur[0] * uv[2], ur[0] * uv[1] - ur[1] * uv[0]
     );
     if (cross_norm == T{0}) {
@@ -173,7 +175,7 @@ inline KeplerPropagationResult<T> propagate_kepler_cpu(
 
     // fdot depends on the new radius r1, so it is computed after the position.
     const T radius1 =
-        std::hypot(final_state.position[0], final_state.position[1], final_state.position[2]);
+        norm3(final_state.position[0], final_state.position[1], final_state.position[2]);
     if (!std::isfinite(radius1) || radius1 <= T{0}) {
         return kepler_failure<T>(Status::numerical_failure, solution.iterations);
     }

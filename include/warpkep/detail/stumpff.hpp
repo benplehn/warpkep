@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <type_traits>
+#include <warpkep/detail/config.hpp>
 
 namespace warpkep::detail {
 
@@ -13,7 +14,7 @@ struct StumpffValues {
 
 // C = c_2(z), S = c_3(z). The caller checks for nonfinite results.
 template <typename T>
-inline StumpffValues<T> stumpff(T z) {
+WARPKEP_HD inline StumpffValues<T> stumpff(T z) {
     static_assert(
         std::is_same_v<T, float> || std::is_same_v<T, double>,
         "stumpff requires float or double type"

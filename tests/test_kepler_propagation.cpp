@@ -1,5 +1,6 @@
 #include <warpkep/detail/kepler_cpu.hpp>
 
+
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -17,7 +18,7 @@ struct AnalyticalCase {
     wd::CartesianState<double> expected;
 };
 
-double distance(const std::array<double, 3>& a, const std::array<double, 3>& b) {
+double distance(const wd::Vector3<double>& a, const wd::Vector3<double>& b) {
     return std::hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }
 

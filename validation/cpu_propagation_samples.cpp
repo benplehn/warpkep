@@ -16,7 +16,7 @@ struct Sample {
     double mu;
 };
 
-void write_vector(const std::array<double, 3>& v) {
+void write_vector(const wd::Vector3<double>& v) {
     std::cout << '[' << v[0] << ',' << v[1] << ',' << v[2] << ']';
 }
 

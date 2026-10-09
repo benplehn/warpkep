@@ -1,6 +1,7 @@
 #pragma once
 
 #include <warpkep/detail/stumpff.hpp>
+#include <warpkep/detail/config.hpp>
 
 namespace warpkep::detail {
 
@@ -23,8 +24,7 @@ struct UniversalKeplerEvaluation {
 // https://orbital-mechanics.space/time-since-periapsis-and-keplers-equation/universal-variables.html
 // Parameters are validated by the caller before evaluating the equation.
 template <typename T>
-inline UniversalKeplerEvaluation<T>
-evaluate_universal_kepler(T chi, const UniversalKeplerParameters<T>& parameters) {
+WARPKEP_HD inline UniversalKeplerEvaluation<T> evaluate_universal_kepler(T chi, const UniversalKeplerParameters<T>& parameters) {
     const T chi2 = chi * chi;
     const T z = parameters.alpha * chi2;
     const auto cs = stumpff(z);
