@@ -1,8 +1,8 @@
 # Numerical contract
 
-**Status:** initial design contract.
+Status: design contract, partially implemented.
 
-warpkep currently provides a C++ library skeleton, Python bindings, a CUDA compilation example and an internal CPU prototype of Kepler propagation in FP64. The public numerical APIs described below, including the GPU batch interface, are not implemented yet.
+warpkep currently provides a C++ library skeleton, Python bindings that only expose the version, generic host/device Kepler primitives in float and double, an internal CPU Kepler propagator in FP64, and an experimental FP64 CUDA batch interface (section 9). The other public numerical APIs described below, including the Python numerical interface, are not implemented yet.
 
 This contract defines their intended behaviour. Solver-specific domains, tolerances and defaults will be documented and validated as the implementations become available.
 
@@ -11,6 +11,7 @@ This contract defines their intended behaviour. Solver-specific domains, toleran
 The API accepts any consistent system of units.
 
 For a length unit L and a time unit T:
+
 
 | Quantity                   | Unit    |
 | -------------------------- | ------- |
@@ -87,6 +88,7 @@ Fast-math transformations are disabled in the validation baseline. Any alternati
 
 Numerical routines return an explicit status for each trajectory.
 
+
 | Status             | Meaning                                                                                                 |
 | ------------------ | ------------------------------------------------------------------------------------------------------- |
 | success            | The computation completed and met the documented numerical termination criteria.                        |
@@ -113,22 +115,42 @@ Where detectable, structural errors are rejected before computation. The C++ cal
 
 An execution failure may prevent the batch from completing. In that case, outputs must not be treated as valid, even if they contain values from an earlier operation. The per-trajectory NaN rule only applies when the numerical computation and failure handling actually complete.
 
-## 9. Batch layout
+## 9. CUDA batch interface (experimental, FP64)
 
-The initial GPU propagation interface is designed around a structure-of-arrays layout.
+Header `<warpkep/cuda/kepler.hpp>`, function `warpkep::launch_kepler_soa_double`, CMake target `warpkep::cuda`.
 
-For N trajectories, Cartesian states use six contiguous one-dimensional arrays:
+The interface operates on data already resident on the selected device. It performs no implicit host-device transfers.
 
-* r\_x, r\_y, r\_z
-* v\_x, v\_y, v\_z
+### Data layout
 
-The initial design uses one shared mu and an array of N relative durations. Output states use the same layout, with N result statuses.
+- For n trajectories, input and output states use six contiguous one-dimensional arrays:
+  `r_x, r_y, r_z, v_x, v_y, v_z`.
+- Each trajectory `i` has its own duration `durations[i]`; `mu` is shared by the batch.
+- The `statuses` and `iterations` arrays are required.
+- Every array holds at least `n` elements and is accessible on the selected device.
+- Outputs must not overlap inputs or each other.
 
 Component ordering and any future representation of augmented states, such as mass or a state-transition matrix, must be documented explicitly.
 
-The GPU interface operates on data already resident on the selected device. It performs no implicit host-device transfers.
+### Memory and streams
 
-A structurally valid empty batch is a no-op and launches no computation.
+- No allocation, no copy, no synchronization.
+- Work is submitted to the caller's stream.
+- All buffers must stay valid until execution completes.
+- `n == 0` is a no-op: it returns `cudaSuccess` without touching pointers or submitting work; null pointers are accepted.
+
+### Errors
+
+- The returned `cudaError_t` reports CUDA runtime errors only.
+  `cudaSuccess` means "submitted", not "finished";
+  execution errors must also be checked at completion.
+- Numerical failures are reported per trajectory in `statuses[i]`;
+  the six output components are then NaN.
+
+### Current domain
+
+- Radial trajectories and zero velocity are rejected for a non-zero duration.
+- GPU coverage of parabolic and hyperbolic cases is not established yet.
 
 ## 10. Memory ownership
 
