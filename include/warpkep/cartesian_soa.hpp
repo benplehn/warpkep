@@ -1,6 +1,6 @@
 #pragma once
 
-namespace warpkep::detail {
+namespace warpkep {
 
 
 template <typename T>
@@ -26,4 +26,4 @@ struct CartesianSoAView {
     T* v_z;
 };
 
-} // namespace warpkep::detail
+} // namespace warpkep

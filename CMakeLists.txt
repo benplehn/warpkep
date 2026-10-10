@@ -32,48 +32,69 @@ if(WARPKEP_BUILD_PYTHON)
     install(TARGETS _core LIBRARY DESTINATION warpkep)
 endif()
 
-option(WARPKEP_ENABLE_CUDA "Enable CUDA compilation" OFF)
+option(WARPKEP_ENABLE_CUDA "Build the CUDA library" OFF)
+
+option(
+    WARPKEP_RUN_GPU_TESTS
+    "Register GPU tests requiring an available CUDA device"
+    OFF
+)
+
+if(WARPKEP_RUN_GPU_TESTS AND NOT WARPKEP_ENABLE_CUDA)
+    message(FATAL_ERROR
+        "WARPKEP_RUN_GPU_TESTS requires WARPKEP_ENABLE_CUDA=ON"
+    )
+endif()
 
 if(WARPKEP_ENABLE_CUDA)
     enable_language(CUDA)
+    find_package(CUDAToolkit REQUIRED)
 
+    add_library(warpkep_cuda STATIC
+        src/cuda/kepler.cu
+    )
+
+    add_library(warpkep::cuda ALIAS warpkep_cuda)
+
+    target_link_libraries(warpkep_cuda PUBLIC
+        warpkep
+        CUDA::cudart
+    )
+
+    set_target_properties(warpkep_cuda PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        CUDA_STANDARD 17
+        CUDA_STANDARD_REQUIRED ON
+        CUDA_EXTENSIONS OFF
+        CUDA_RUNTIME_LIBRARY Shared
+        CUDA_SEPARABLE_COMPILATION OFF
+    )
+
+    # Compilation coverage of the internal host/device primitives.
     add_library(warpkep_cuda_compile_smoke OBJECT
         examples/cuda_smoke.cu
+    )
+
+    target_link_libraries(warpkep_cuda_compile_smoke PRIVATE
+        warpkep
+        CUDA::cudart
     )
 
     set_target_properties(warpkep_cuda_compile_smoke PROPERTIES
         CUDA_STANDARD 17
         CUDA_STANDARD_REQUIRED ON
         CUDA_EXTENSIONS OFF
+        CUDA_RUNTIME_LIBRARY Shared
     )
 
-    target_link_libraries(warpkep_cuda_compile_smoke PRIVATE warpkep)
-
-
+    # An ordinary C++ consumer of the compiled CUDA library.
     add_executable(warpkep_gpu_smoke
-    examples/kepler_gpu_smoke.cu
+        examples/kepler_gpu_smoke.cpp
     )
 
     target_link_libraries(warpkep_gpu_smoke PRIVATE
-        warpkep
-        warpkep_cuda_compile_smoke
+        warpkep::cuda
     )
-
-    set_target_properties(warpkep_gpu_smoke PROPERTIES
-        CUDA_STANDARD 17
-        CUDA_STANDARD_REQUIRED ON
-        CUDA_EXTENSIONS OFF
-    )
-
-endif()
-
-option(WARPKEP_BUILD_BENCHMARKS "Build CPU benchmarks" OFF)
-
-if(WARPKEP_BUILD_BENCHMARKS)
-    find_package(Threads REQUIRED)
-
-    add_executable(warpkep_cpu_baseline benchmarks/cpu_baseline.cpp)
-    target_link_libraries(warpkep_cpu_baseline PRIVATE warpkep Threads::Threads)
 endif()
 
 include(CTest)
