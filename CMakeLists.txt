@@ -97,6 +97,23 @@ if(WARPKEP_ENABLE_CUDA)
     )
 endif()
 
+
+option(WARPKEP_BUILD_BENCHMARKS "Build CPU benchmarks" OFF)
+
+if(WARPKEP_BUILD_BENCHMARKS)
+    find_package(Threads REQUIRED)
+
+    add_executable(warpkep_cpu_baseline
+        benchmarks/cpu_baseline.cpp
+    )
+
+    target_link_libraries(warpkep_cpu_baseline PRIVATE
+        warpkep
+        Threads::Threads
+    )
+endif()
+
+
 include(CTest)
 
 if(BUILD_TESTING)
@@ -124,3 +141,23 @@ if(BUILD_TESTING)
     add_executable(warpkep_cpu_samples validation/cpu_propagation_samples.cpp)
     target_link_libraries(warpkep_cpu_samples PRIVATE warpkep)
 endif()
+
+
+if(WARPKEP_RUN_GPU_TESTS)
+    if(NOT BUILD_TESTING)
+        message(FATAL_ERROR
+            "WARPKEP_RUN_GPU_TESTS requires BUILD_TESTING=ON"
+        )
+    endif()
+
+    add_test(
+        NAME kepler_gpu_smoke
+        COMMAND warpkep_gpu_smoke
+    )
+
+    set_tests_properties(kepler_gpu_smoke PROPERTIES
+        LABELS "gpu"
+    )
+endif()
+
+

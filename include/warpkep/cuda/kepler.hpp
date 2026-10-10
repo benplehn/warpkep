@@ -21,14 +21,14 @@ namespace warpkep{
     // - Storage must remain valid until execution completes.
 
     // No allocation, transfer or synchronization is performed.
-    // cudaSuccess does not mean that ouput data is ready
+    // cudaSuccess does not mean that output data is ready
     // Execution errors must also be checked at completion
 
     // For n == 0, returns cudaSuccess without accessing pointers or submitting work; nullptrs are accepted
 
     cudaError_t launch_kepler_soa_double(
         CartesianSoAConstView<double> input,
-        const double* duations,
+        const double* durations,
         double mu,
         CartesianSoAView<double> output,
         KeplerPropagationStatus* statuses,
