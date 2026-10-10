@@ -1,4 +1,10 @@
-#include "kepler_launch.hpp"
+#include <warpkep/cuda/kepler.hpp>
+
+// Needed by this example's scalar reference states.
+#include <warpkep/detail/kepler_cpu.hpp>
+
+// Includes the typed CUDA allocation helpers used by DeviceArray.
+#include <cuda_runtime.h>
 
 #include <array>
 #include <cmath>
@@ -79,7 +85,7 @@ cudaError_t copy_to_cpu(std::array<T, N>& dst, const DeviceArray<T>& src, cudaSt
 
 int main() {
     // --- Test 1: empty batch (no kernel is launched) ---
-    const cudaError_t status = launch_kepler_soa_double(
+    const cudaError_t status = warpkep::launch_kepler_soa_double(
         {}, nullptr, 1.0, {}, nullptr, nullptr, 0, nullptr
     );
     if (status != cudaSuccess) {
@@ -220,14 +226,14 @@ int main() {
 
     // --- 6. Enqueue the kernel, after the input copies in the same stream ---
     // The views bundle the six GPU addresses of each side.
-    const wd::CartesianSoAConstView<double> input{
+    const warpkep::CartesianSoAConstView<double> input{
         d_r_x.ptr, d_r_y.ptr, d_r_z.ptr, d_v_x.ptr, d_v_y.ptr, d_v_z.ptr
     };
-    const wd::CartesianSoAView<double> output{
+    const warpkep::CartesianSoAView<double> output{
         d_out_r_x.ptr, d_out_r_y.ptr, d_out_r_z.ptr,
         d_out_v_x.ptr, d_out_v_y.ptr, d_out_v_z.ptr
     };
-    if (!check(launch_kepler_soa_double(
+    if (!check(warpkep::launch_kepler_soa_double(
                    input, d_durations.ptr, 1.0, output,
                    d_statuses.ptr, d_iterations.ptr, n, s),
                "Kernel launch")) {

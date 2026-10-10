@@ -83,7 +83,8 @@ jobs:
             -t warpkep-cuda:ci \
             docker
 
-      - name: Compile CUDA target
+      - name: Compile and link CUDA targets
+        # No GPU on this runner: build only, never execute.
         run: |
           docker run --rm \
             --platform linux/amd64 \
@@ -97,10 +98,11 @@ jobs:
                 -DBUILD_TESTING=OFF \
                 -DWARPKEP_BUILD_BENCHMARKS=OFF \
                 -DWARPKEP_ENABLE_CUDA=ON \
+                -DWARPKEP_RUN_GPU_TESTS=OFF \
                 -DWARPKEP_BUILD_PYTHON=OFF \
                 -DCMAKE_CUDA_ARCHITECTURES=80
               cmake --build build/cuda-ci \
-                --target warpkep_cuda_compile_smoke \
+                --target warpkep_cuda warpkep_cuda_compile_smoke warpkep_gpu_smoke \
                 --parallel 2
             '
 
