@@ -10,7 +10,7 @@ import argparse
 import json
 import subprocess
 import sys
-from importlib.metadata import version
+from importlib import import_module
 from pathlib import Path
 
 import numpy as np
