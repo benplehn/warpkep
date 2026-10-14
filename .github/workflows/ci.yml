@@ -173,6 +173,7 @@ jobs:
                 echo "Diagnostic attempt $attempt"
 
                 gdb --batch \
+                  -ex "set disable-randomization off" \
                   -ex run \
                   -ex "thread apply all bt" \
                   --args python -X faulthandler \

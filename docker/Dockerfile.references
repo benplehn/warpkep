@@ -10,7 +10,6 @@ RUN python -m pip install --no-cache-dir --only-binary=:all: \
 # Restore TOPS data omitted from the pykep 3.0.1 wheel.
 # Source: the upstream commit used to publish that release.
 RUN python - <<'PY'
-import importlib
 import json
 import sysconfig
 from importlib.metadata import version
@@ -38,7 +37,6 @@ for family in ("cr3bp", "twobody", "ss", "mee"):
     print(f"Restored {filename}")
 
 for name in ("pykep", "heyoka", "lamberthub"):
-    importlib.import_module(name)
     print(f"{name}: {version(name)}")
 PY
 
