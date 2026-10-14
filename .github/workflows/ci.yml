@@ -11,7 +11,7 @@ permissions:
 jobs:
   cpu-python:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 40
 
     steps:
       - name: Checkout sources
@@ -154,7 +154,7 @@ jobs:
             -t warpkep-references:ci \
             docker
 
-      - name: Diagnose pykep native memory errors
+      - name: Check pykep process shutdown repeatedly
         run: |
           docker run --rm \
             --platform linux/amd64 \
@@ -162,17 +162,19 @@ jobs:
             -w /workspace \
             warpkep-references:ci \
             bash -c '
-              set -e
-              apt-get update
-              apt-get install -y --no-install-recommends valgrind
+              set -euo pipefail
 
-              PYTHONMALLOC=malloc valgrind \
-                --tool=memcheck \
-                --track-origins=yes \
-                --num-callers=30 \
-                --error-exitcode=99 \
+              for attempt in $(seq 1 20); do
+                echo "Shutdown check $attempt/20"
+
                 python -X faulthandler \
                   validation/reference_smoke.py --engine pykep
+
+                python -X faulthandler \
+                  validation/compare_cpu_references.py \
+                  build/references/propagation_samples.json \
+                  --engine pykep
+              done
             '
 
       - name: Check reference propagators

@@ -98,7 +98,7 @@ def compare(path, engine):
         raise ValueError("No propagation samples provided")
 
     propagate = propagate_pykep if engine == "pykep" else propagate_heyoka
-    engine_version = version(engine)
+    engine_version = import_module(engine).__version__
     known = KNOWN_DIVERGENCES.get((engine, engine_version), set())
     print(f"Reference: {engine} {engine_version}", flush=True)
 

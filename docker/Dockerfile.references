@@ -1,43 +1,94 @@
 # syntax=docker/dockerfile:1
-FROM python:3.13-slim-bookworm
+FROM mambaorg/micromamba:2.3.3
 
-RUN python -m pip install --no-cache-dir --only-binary=:all: \
-        pykep==3.0.1 \
-        heyoka==7.10.1 \
-        lamberthub==1.0.0 \
-    && python -m pip check
+# One shared native heyoka installation for both Python modules.
+RUN micromamba install -y -n base -c conda-forge \
+        "python=3.13" \
+        pip setuptools git ninja \
+        "cmake>=3.30,<3.31" \
+        c-compiler cxx-compiler \
+        libboost-devel fmt spdlog \
+        "heyoka=7.10.0" \
+        "heyoka.py=7.10.1" \
+        "pybind11>=3,<4" \
+        "xtensor=0.26.0" \
+        "xtensor-blas=0.22.0" \
+        blas blas-devel "libblas=*=*openblas" \
+        pagmo-devel pygmo \
+        "eigen>=3,<5" "nlopt<2.10.1" \
+        "numpy>=2,<3" scipy matplotlib \
+        sgp4 spiceypy numba \
+    && micromamba clean --all --yes
 
-# Restore TOPS data omitted from the pykep 3.0.1 wheel.
-# Source: the upstream commit used to publish that release.
+ARG MAMBA_DOCKERFILE_ACTIVATE=1
+ENV PYTHONUNBUFFERED=1
+
+RUN python -m pip install --no-cache-dir --no-deps lamberthub==1.0.0
+
+# Build pykep 3.0.1 against the same heyoka library used by heyoka.py.
+ARG PYKEP_COMMIT=a0c251deabc60c0738c36575b0585284eb26f2fa
+
+WORKDIR /tmp
+
+RUN git init /tmp/pykep \
+    && git -C /tmp/pykep remote add origin https://github.com/esa/pykep.git \
+    && git -C /tmp/pykep fetch --depth 1 origin "${PYKEP_COMMIT}" \
+    && git -C /tmp/pykep checkout --detach FETCH_HEAD \
+    && git -C /tmp/pykep submodule update --init --recursive \
+    && cmake -S /tmp/pykep -B /tmp/pykep/build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/conda \
+        -DCMAKE_PREFIX_PATH=/opt/conda \
+        -DCMAKE_INSTALL_RPATH=/opt/conda/lib \
+        -DPython3_EXECUTABLE=/opt/conda/bin/python \
+        -Dkep3_BUILD_TESTS=OFF \
+        -Dkep3_BUILD_BENCHMARKS=OFF \
+        -Dkep3_BUILD_PYTHON_BINDINGS=ON \
+    && cmake --build /tmp/pykep/build --target install --parallel 2
+
+# Install TOPS data directly from the pinned source checkout.
 RUN python - <<'PY'
 import json
+import shutil
 import sysconfig
-from importlib.metadata import version
 from pathlib import Path
-from urllib.request import urlopen
 
-commit = "a0c251deabc60c0738c36575b0585284eb26f2fa"
-base_url = (
-    f"https://raw.githubusercontent.com/esa/pykep/{commit}/"
-    "pykep/trajopt/gym/tops/"
-)
-
-destination = (
-    Path(sysconfig.get_path("purelib"))
-    / "pykep" / "trajopt" / "gym" / "tops"
-)
+source = Path("/tmp/pykep/pykep/trajopt/gym/tops")
+destination = Path(sysconfig.get_path("purelib")) / "pykep/trajopt/gym/tops"
 destination.mkdir(parents=True, exist_ok=True)
 
 for family in ("cr3bp", "twobody", "ss", "mee"):
     filename = f"_tops_{family}.json"
-    with urlopen(base_url + filename, timeout=60) as response:
-        data = response.read()
-    json.loads(data)
-    (destination / filename).write_bytes(data)
-    print(f"Restored {filename}")
-
-for name in ("pykep", "heyoka", "lamberthub"):
-    print(f"{name}: {version(name)}")
+    json.loads((source / filename).read_text())
+    shutil.copyfile(source / filename, destination / filename)
 PY
 
 WORKDIR /workspace
+
+# Imports must succeed and Python must shut down normally.
+# Check that both modules load only one native heyoka library.
+RUN python -X faulthandler - <<'PY'
+from importlib.metadata import version
+from pathlib import Path
+
+import heyoka as hy
+import pykep as pk
+import lamberthub
+
+assert pk.__version__ == "3.0.1", pk.__version__
+assert hy.__version__ == "7.10.1", hy.__version__
+
+libraries = {
+    str(Path(line.split()[-1]).resolve())
+    for line in Path("/proc/self/maps").read_text().splitlines()
+    if "/libheyoka" in line and ".so" in line
+}
+assert len(libraries) == 1, f"Expected one native heyoka library: {libraries}"
+
+print(f"pykep: {pk.__version__}")
+print(f"heyoka: {hy.__version__}")
+print(f"lamberthub: {version('lamberthub')}")
+print(f"Shared native heyoka: {next(iter(libraries))}")
+PY
+
+RUN rm -rf /tmp/pykep
