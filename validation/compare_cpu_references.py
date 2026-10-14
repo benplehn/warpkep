@@ -114,23 +114,36 @@ def compare(path, engine):
         # A failing reference is reported, never replaced by warpkep output.
         try:
             ref_r, ref_v = propagate(
-                list(case["r0"]), list(case["v0"]), case["dt"], case["mu"]
+                list(case["r0"]), list(case["v0"]),
+                case["dt"], case["mu"]
             )
             error_r, error_v = scaled_errors(case, ref_r, ref_v)
         except Exception as exc:
-            error_r = error_v = float("nan")
-            detail = f"REFERENCE FAILED: {exc!r}"
-        else:
-            detail = f"error_r={error_r:.3e}, error_v={error_v:.3e}, tol={case['tol']:.1e}"
+            failures.append(name)
+            print(
+                f"  {name}: REFERENCE FAILED ({engine}): {exc!r}",
+                flush=True,
+            )
+            continue
+
+        detail = (
+            f"error_r={error_r:.3e}, error_v={error_v:.3e}, "
+            f"tol={case['tol']:.1e}"
+        )
+        finite = np.isfinite(error_r) and np.isfinite(error_v)
 
         if within(case, error_r, error_v):
             max_error_r = max(max_error_r, error_r)
             max_error_v = max(max_error_v, error_v)
             note = " (listed as known divergence)" if name in known else ""
             print(f"  {name}: {detail} ok{note}", flush=True)
-        elif name in known:
+        elif finite and name in known:
             known_hits.append(name)
-            print(f"  {name}: {detail} KNOWN DIVERGENCE ({engine} {engine_version})", flush=True)
+            print(
+                f"  {name}: {detail} "
+                f"KNOWN DIVERGENCE ({engine} {engine_version})",
+                flush=True,
+            )
         else:
             failures.append(name)
             print(f"  {name}: {detail} FAILED", flush=True)

@@ -102,9 +102,10 @@ jobs:
                 -DWARPKEP_BUILD_PYTHON=OFF \
                 -DCMAKE_CUDA_ARCHITECTURES=80
               cmake --build build/cuda-ci \
-                --target warpkep_cuda warpkep_cuda_compile_smoke warpkep_gpu_smoke \
-                --parallel 2
-            '
+              --target warpkep_cuda warpkep_cuda_compile_smoke \
+                      warpkep_gpu_smoke warpkep_test_kepler_gpu \
+              --parallel 2
+                        '
 
   references:
     runs-on: ubuntu-24.04
