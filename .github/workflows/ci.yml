@@ -154,30 +154,25 @@ jobs:
             -t warpkep-references:ci \
             docker
 
-      - name: Diagnose intermittent pykep abort
-        # Temporary diagnostic. Normal validation remains below.
+      - name: Check pykep process shutdown repeatedly
         run: |
           docker run --rm \
             --platform linux/amd64 \
-            --cap-add=SYS_PTRACE \
             -v "${{ github.workspace }}:/workspace:ro" \
             -w /workspace \
             warpkep-references:ci \
             bash -c '
               set -e
+              for attempt in $(seq 1 20); do
+                echo "Shutdown check $attempt/20"
 
-              apt-get update
-              apt-get install -y --no-install-recommends gdb
+                python -X faulthandler \
+                  validation/reference_smoke.py --engine pykep
 
-              for attempt in $(seq 1 10); do
-                echo "Diagnostic attempt $attempt"
-
-                gdb --batch \
-                  -ex "set disable-randomization off" \
-                  -ex run \
-                  -ex "thread apply all bt" \
-                  --args python -X faulthandler \
-                    validation/reference_smoke.py --engine pykep
+                python -X faulthandler \
+                  validation/compare_cpu_references.py \
+                  build/references/propagation_samples.json \
+                  --engine pykep
               done
             '
 

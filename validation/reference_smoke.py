@@ -26,6 +26,10 @@ def normalize_inputs(r0, v0, dt, mu):
 
 def propagate_pykep(r0, v0, dt, mu):
     r0, v0, dt, mu = normalize_inputs(r0, v0, dt, mu)
+
+    # Load heyoka before pykep exposes its native dependencies globally.
+    # Candidate workaround for the observed intermittent shutdown abort.
+    import heyoka
     import pykep as pk
 
     r, v = pk.propagate_lagrangian(rv=[r0, v0], tof=dt, mu=mu)
