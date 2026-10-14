@@ -43,7 +43,8 @@ jobs:
         run: ctest --test-dir build/cpu --output-on-failure
 
       - name: Check parallel CPU batch
-        # Uneven partitions exercise remainder handling. No performance threshold.
+        # Uneven partitions exercise remainder handling.
+        # No performance threshold.
         run: ./build/cpu/warpkep_cpu_baseline 10003 4 2
 
       - name: Run C++ executable
@@ -93,6 +94,7 @@ jobs:
             warpkep-cuda:ci \
             bash -c '
               set -e
+
               cmake -S . -B build/cuda-ci -G Ninja \
                 -DCMAKE_BUILD_TYPE=Release \
                 -DBUILD_TESTING=OFF \
@@ -101,11 +103,12 @@ jobs:
                 -DWARPKEP_RUN_GPU_TESTS=OFF \
                 -DWARPKEP_BUILD_PYTHON=OFF \
                 -DCMAKE_CUDA_ARCHITECTURES=80
+
               cmake --build build/cuda-ci \
-              --target warpkep_cuda warpkep_cuda_compile_smoke \
-                      warpkep_gpu_smoke warpkep_test_kepler_gpu \
-              --parallel 2
-                        '
+                --target warpkep_cuda warpkep_cuda_compile_smoke \
+                         warpkep_gpu_smoke warpkep_test_kepler_gpu \
+                --parallel 2
+            '
 
   references:
     runs-on: ubuntu-24.04
@@ -133,8 +136,10 @@ jobs:
             -DWARPKEP_BUILD_BENCHMARKS=OFF \
             -DWARPKEP_BUILD_PYTHON=OFF \
             -DWARPKEP_ENABLE_CUDA=OFF
+
           cmake --build build/references \
-            --target warpkep_cpu_samples --parallel 2
+            --target warpkep_cpu_samples \
+            --parallel 2
 
       - name: Generate C++ propagation samples
         run: |
@@ -148,6 +153,32 @@ jobs:
             -f docker/Dockerfile.references \
             -t warpkep-references:ci \
             docker
+
+      - name: Diagnose intermittent pykep abort
+        # Temporary diagnostic. Normal validation remains below.
+        run: |
+          docker run --rm \
+            --platform linux/amd64 \
+            --cap-add=SYS_PTRACE \
+            -v "${{ github.workspace }}:/workspace:ro" \
+            -w /workspace \
+            warpkep-references:ci \
+            bash -c '
+              set -e
+
+              apt-get update
+              apt-get install -y --no-install-recommends gdb
+
+              for attempt in $(seq 1 10); do
+                echo "Diagnostic attempt $attempt"
+
+                gdb --batch \
+                  -ex run \
+                  -ex "thread apply all bt" \
+                  --args python -X faulthandler \
+                    validation/reference_smoke.py --engine pykep
+              done
+            '
 
       - name: Check reference propagators
         run: |
