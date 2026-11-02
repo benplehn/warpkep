@@ -124,6 +124,19 @@ if(WARPKEP_BUILD_BENCHMARKS)
         warpkep
         Threads::Threads
     )
+
+    # CPU/GPU benchmark: plain C++ consumer of the CUDA library.
+    # Only when the CUDA library is built.
+    if(WARPKEP_ENABLE_CUDA)
+        add_executable(warpkep_kepler_benchmark
+            benchmarks/kepler_benchmark.cpp
+        )
+
+        target_link_libraries(warpkep_kepler_benchmark PRIVATE
+            warpkep::cuda
+            Threads::Threads
+        )
+    endif()
 endif()
 
 

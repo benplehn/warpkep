@@ -1,3 +1,5 @@
+#include "kepler_workload.hpp"
+
 #include <warpkep/detail/kepler_cpu.hpp>
 #include <warpkep/version.hpp>
 
@@ -14,95 +16,9 @@
 
 namespace {
 
-using warpkep::detail::CartesianState;
 using warpkep::detail::KeplerPropagationResult;
 using warpkep::detail::KeplerPropagationStatus;
 
-struct Input {
-    CartesianState<double> state;
-    double dt;
-};
-
-// Fixed, normalized workload: circular, elliptic and hyperbolic states,
-// with different orientations, radii and positive/negative durations.
-// Generation is excluded from the measured interval.
-std::vector<Input> make_inputs(std::size_t count) {
-    const double pi = std::acos(-1.0);
-    std::vector<Input> inputs(count);
-
-    for (std::size_t i = 0; i < count; ++i) {
-        const double angle = 2.0 * pi * static_cast<double>(i % 997) / 997.0;
-        const double radius = 0.8 + 1.2 * static_cast<double>(i % 251) / 251.0;
-        const double inclination = 0.6 * static_cast<double>(i % 127) / 127.0;
-        const double speed_factor = (i % 3 == 0) ? 1.0 : (i % 3 == 1 ? 0.75 : 1.65);
-        const double speed = speed_factor / std::sqrt(radius); // mu = 1
-        const double c = std::cos(angle);
-        const double s = std::sin(angle);
-        inputs[i].state = {
-            {radius * c, radius * s, 0.0},
-            {-speed * s * std::cos(inclination),
-              speed * c * std::cos(inclination),
-              speed * std::sin(inclination)}
-        };
-
-        const double duration = 0.2 + 1.8 * static_cast<double>(i % 509) / 509.0;
-        inputs[i].dt = (i % 2 == 0) ? duration : -duration;
-    }
-    return inputs;
-}
-
-// Each call writes only [begin, end); inputs are shared read-only.
-void propagate_range(
-    const std::vector<Input>& inputs,
-    std::vector<KeplerPropagationResult<double>>& outputs,
-    std::size_t begin, std::size_t end
-) {
-    for (std::size_t i = begin; i < end; ++i) {
-        outputs[i] = warpkep::detail::propagate_kepler_cpu<double>(
-            inputs[i].state, inputs[i].dt, 1.0
-        );
-    }
-}
-
-void run_batch(
-    const std::vector<Input>& inputs,
-    std::vector<KeplerPropagationResult<double>>& outputs,
-    std::size_t thread_count
-) {
-    if (thread_count == 1) {
-        propagate_range(inputs, outputs, 0, inputs.size());
-        return;
-    }
-
-    std::vector<std::thread> workers;
-    workers.reserve(thread_count - 1);
-    const std::size_t base = inputs.size() / thread_count;
-    const std::size_t extra = inputs.size() % thread_count;
-    auto boundary = [&](std::size_t t) {
-        return t * base + std::min(t, extra);
-    };
-
-    // The caller handles one chunk, so the total is thread_count threads.
-    try {
-        for (std::size_t t = 0; t + 1 < thread_count; ++t) {
-            const std::size_t begin = boundary(t);
-            const std::size_t end = boundary(t + 1);
-            workers.emplace_back([&inputs, &outputs, begin, end] {
-                propagate_range(inputs, outputs, begin, end);
-            });
-        }
-
-        propagate_range(inputs, outputs, boundary(thread_count - 1), inputs.size());
-    } catch (...) {
-        for (auto& worker : workers) {
-            worker.join();
-        }
-        throw;
-    }
-    for (auto& worker : workers) {
-        worker.join();
-    }
-}
 
 void check_results(
     const std::vector<KeplerPropagationResult<double>>& serial,
@@ -131,12 +47,12 @@ void check_results(
 }
 
 double measure(
-    const std::vector<Input>& inputs,
+    const std::vector<warpkep_bench::Input>& inputs,
     std::vector<KeplerPropagationResult<double>>& outputs,
     std::size_t threads
 ) {
     const auto start = std::chrono::steady_clock::now();
-    run_batch(inputs, outputs, threads);
+    warpkep_bench::run_batch(inputs, outputs, threads);
     const auto stop = std::chrono::steady_clock::now();
     return std::chrono::duration<double>(stop - start).count();
 }
@@ -178,14 +94,14 @@ int main(int argc, char** argv) {
             throw std::invalid_argument("Thread count must be <= count and <= 256");
         }
 
-        const auto inputs = make_inputs(count);
+        const auto inputs = warpkep_bench::make_inputs(count);
         std::vector<KeplerPropagationResult<double>> serial(count), parallel(count);
         std::vector<double> serial_times, parallel_times;
         serial_times.reserve(repeats);
         parallel_times.reserve(repeats);
 
         // Warm both paths and check partitioning before timing.
-        run_batch(inputs, serial, 1);
+        warpkep_bench::run_batch(inputs, serial, 1);
         run_batch(inputs, parallel, threads);
         check_results(serial, parallel);
 
