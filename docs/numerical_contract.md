@@ -207,6 +207,8 @@ Benchmarks compare methods at equivalent accuracy and supported-domain coverage.
 
 Asynchronous GPU work is timed using a procedure that accounts for completion. Timing only the submission of work is not an execution benchmark.
 
+Known reference divergences are listed in `validation/compare_cpu_references.py`, pinned to an engine version. With pykep 3.0.1, six near-parabolic cases (|e − 1| ≤ 1e-8, dt = ±1) diverge from warpkep and heyoka, consistent with cancellation in pykep's separate elliptic and hyperbolic branches. Their errors are still computed and reported. heyoka is required on every case, and exact parabolic cases are also checked against Barker's equation.
+
 ## 14. Changes to this contract
 
 This document describes intended behaviour until the first numerical prototype is available.

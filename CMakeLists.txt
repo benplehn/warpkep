@@ -95,6 +95,19 @@ if(WARPKEP_ENABLE_CUDA)
     target_link_libraries(warpkep_gpu_smoke PRIVATE
         warpkep::cuda
     )
+
+    # GPU validation against the shared cases (validation/kepler_cases.hpp).
+    add_executable(warpkep_test_kepler_gpu
+        tests/test_kepler_gpu.cpp
+    )
+
+    target_include_directories(warpkep_test_kepler_gpu PRIVATE
+        validation
+    )
+
+    target_link_libraries(warpkep_test_kepler_gpu PRIVATE
+        warpkep::cuda
+    )
 endif()
 
 
@@ -155,7 +168,12 @@ if(WARPKEP_RUN_GPU_TESTS)
         COMMAND warpkep_gpu_smoke
     )
 
-    set_tests_properties(kepler_gpu_smoke PROPERTIES
+    add_test(
+        NAME kepler_gpu_validation
+        COMMAND warpkep_test_kepler_gpu
+    )
+
+    set_tests_properties(kepler_gpu_smoke kepler_gpu_validation PROPERTIES
         LABELS "gpu"
     )
 endif()

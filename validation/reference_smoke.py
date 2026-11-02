@@ -4,7 +4,7 @@ import argparse
 import math
 import subprocess
 import sys
-from importlib.metadata import version
+from importlib import import_module
 from pathlib import Path
 
 import numpy as np
@@ -65,7 +65,7 @@ def check_reference(engine):
         np.linalg.norm(r - np.array([0.0, 1.0, 0.0])),
         np.linalg.norm(v - np.array([-1.0, 0.0, 0.0])),
     ])
-    print(f"{engine}: {version(engine)}", flush=True)
+    print(f"{engine}: {import_module(engine).__version__}", flush=True)
     print(f"  Position error: {errors[0]:.3e}", flush=True)
     print(f"  Velocity error: {errors[1]:.3e}", flush=True)
     if not np.all(np.isfinite(errors)) or np.any(errors > 1e-12):
