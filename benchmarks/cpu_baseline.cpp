@@ -57,12 +57,7 @@ double measure(
     return std::chrono::duration<double>(stop - start).count();
 }
 
-double median(std::vector<double> times) {
-    std::sort(times.begin(), times.end());
-    const std::size_t middle = times.size() / 2;
-    return (times.size() % 2 == 0)
-        ? 0.5 * (times[middle - 1] + times[middle]) : times[middle];
-}
+
 
 std::size_t positive_integer(const char* text) {
     const std::string value(text);
@@ -117,8 +112,8 @@ int main(int argc, char** argv) {
             check_results(serial, parallel); // Outside the timed interval.
         }
 
-        const double serial_seconds = median(serial_times);
-        const double parallel_seconds = median(parallel_times);
+        const double serial_seconds = warpkep_bench::median(serial_times);
+        const double parallel_seconds = warpkep_bench::median(parallel_times);
         if (serial_seconds <= 0.0 || parallel_seconds <= 0.0) {
             throw std::runtime_error("Batch too short for the clock: increase count");
         }

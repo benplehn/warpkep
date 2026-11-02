@@ -100,4 +100,12 @@ inline void run_batch(const std::vector<Input>& inputs, std::vector<KeplerPropag
     }
 }
 
+
+inline double median(std::vector<double> times) {
+    std::sort(times.begin(), times.end());
+    const std::size_t middle = times.size() / 2;
+    return (times.size() % 2 == 0)
+        ? 0.5 * (times[middle - 1] + times[middle]) : times[middle];
+}
+
 } // namespace warpkep_bench
