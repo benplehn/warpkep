@@ -249,9 +249,11 @@ int main() {
         // 2. GPU work. The inner catch waits for queued work while the buffers still exist.
         try {
             // Kernel only: data already on the GPU. One untimed warm-up first.
-            copy_in();
-            require(launch(), "launch (warm-up)");
-            require(cudaStreamSynchronize(stream.handle), "cudaStreamSynchronize (warm-up)");
+            const auto warm_begin = std::chrono::steady_clock::now();
+            do {
+                full_pass();
+            } while (std::chrono::steady_clock::now() - warm_begin
+                    < std::chrono::seconds(1));
 
             // Timed: [start] 32 launches [stop], no copy inside the interval.
             for (int repeat = 0; repeat < timed_repeats; ++repeat) {
@@ -298,6 +300,12 @@ int main() {
             }
             const double ms = warpkep_bench::median(times_ms);
             std::cout << "  " << std::left << std::setw(22) << label << std::right << std::setw(12) << ms << " ms  " << std::setw(14) << static_cast<double>(n) / (ms / 1000.0) << " propagations/s\n";
+            std::cout << label << " samples (ms):";
+            for (double duration : times_ms) {
+                std::cout << ' ' << duration;
+            }
+            std::cout << '\n';
+        
         };
 
         std::cout << "Workload: " << n << " trajectories, normalized two-body, mu = 1, FP64\n";
