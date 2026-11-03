@@ -1,6 +1,7 @@
-// CPU/GPU benchmark of the FP64 Kepler batch.
-// Current stage: kernel time with data already on the GPU (CUDA events,
-// median of 9 repeats of 32 launches), results checked against the CPU.
+// CPU/GPU benchmark of the FP64 Kepler batch on a shared workload.
+// Four timings (median of 9 repeats): CPU serial, CPU parallel, GPU kernel only
+// (CUDA events, 32 launches per repeat), GPU with transfers (steady_clock).
+// Every timed result is checked outside the timed intervals.
 
 #include "kepler_workload.hpp"
 
@@ -9,14 +10,19 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <iomanip>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 using Status = warpkep::KeplerPropagationStatus;
+using CpuResults = std::vector<warpkep::detail::KeplerPropagationResult<double>>;
 
 // RAII owners: the constructor acquires one CUDA resource, the destructor releases it.
 // RAII does not wait for pending GPU work: synchronize before buffers go out of scope.
@@ -27,12 +33,8 @@ struct DeviceArray {
     T* ptr = nullptr;
     cudaError_t error = cudaSuccess;
 
-    explicit DeviceArray(std::size_t count) { 
-        error = cudaMalloc(&ptr, count * sizeof(T)); 
-    }
-    ~DeviceArray() noexcept { 
-        if (ptr != nullptr) cudaFree(ptr); 
-    }
+    explicit DeviceArray(std::size_t count) { error = cudaMalloc(&ptr, count * sizeof(T)); }
+    ~DeviceArray() noexcept { if (ptr != nullptr) cudaFree(ptr); }
 
     DeviceArray(const DeviceArray&) = delete;
     DeviceArray& operator=(const DeviceArray&) = delete;
@@ -44,12 +46,8 @@ struct PinnedArray {
     T* ptr = nullptr;
     cudaError_t error = cudaSuccess;
 
-    explicit PinnedArray(std::size_t count) { 
-        error = cudaMallocHost(&ptr, count * sizeof(T)); 
-    }
-    ~PinnedArray() noexcept { 
-        if (ptr != nullptr) cudaFreeHost(ptr); 
-    }
+    explicit PinnedArray(std::size_t count) { error = cudaMallocHost(&ptr, count * sizeof(T)); }
+    ~PinnedArray() noexcept { if (ptr != nullptr) cudaFreeHost(ptr); }
 
     PinnedArray(const PinnedArray&) = delete;
     PinnedArray& operator=(const PinnedArray&) = delete;
@@ -60,12 +58,8 @@ struct CudaStream {
     cudaStream_t handle = nullptr;
     cudaError_t error = cudaSuccess;
 
-    CudaStream() {
-        error = cudaStreamCreateWithFlags(&handle, cudaStreamNonBlocking); 
-    }
-    ~CudaStream() noexcept { 
-        if (handle != nullptr) cudaStreamDestroy(handle); 
-    }
+    CudaStream() { error = cudaStreamCreateWithFlags(&handle, cudaStreamNonBlocking); }
+    ~CudaStream() noexcept { if (handle != nullptr) cudaStreamDestroy(handle); }
 
     CudaStream(const CudaStream&) = delete;
     CudaStream& operator=(const CudaStream&) = delete;
@@ -76,12 +70,8 @@ struct CudaEvent {
     cudaEvent_t handle = nullptr;
     cudaError_t error = cudaSuccess;
 
-    CudaEvent() { 
-        error = cudaEventCreate(&handle); 
-    }
-    ~CudaEvent() noexcept { 
-        if (handle != nullptr) cudaEventDestroy(handle); 
-    }
+    CudaEvent() { error = cudaEventCreate(&handle); }
+    ~CudaEvent() noexcept { if (handle != nullptr) cudaEventDestroy(handle); }
 
     CudaEvent(const CudaEvent&) = delete;
     CudaEvent& operator=(const CudaEvent&) = delete;
@@ -155,21 +145,111 @@ int main() {
         output.v_z = d_out.ptr + 5 * n;
 
         // CPU reference on the same inputs, outside any timed region.
-        std::vector<warpkep::detail::KeplerPropagationResult<double>> cpu(n);
+        CpuResults cpu(n);
         warpkep_bench::run_batch(inputs, cpu, 1);
 
-        std::vector<double> kernel_ms;            // ms per launch, one value per repeat
-        kernel_ms.reserve(timed_repeats);
+        // CPU threads for the parallel baseline: all hardware threads, at least 1.
+        constexpr std::size_t threads = 2;
+        // Used later: const std::size_t threads = std::max(1u, std::thread::hardware_concurrency());
 
-        const auto launch = [&] { 
-            return warpkep::launch_kepler_soa_double(input, d_dt, mu, output, d_status.ptr, d_iter.ptr, n, stream.handle); 
+        // Timed CPU runs write here; cpu stays the untouched reference.
+        CpuResults cpu_serial(n);
+        CpuResults cpu_parallel(n);
+
+        // One duration per repeat, in milliseconds.
+        std::vector<double> cpu_serial_ms;
+        std::vector<double> cpu_parallel_ms;
+        std::vector<double> kernel_ms;            // per launch
+        std::vector<double> gpu_total_ms;
+        cpu_serial_ms.reserve(timed_repeats);
+        cpu_parallel_ms.reserve(timed_repeats);
+        kernel_ms.reserve(timed_repeats);
+        gpu_total_ms.reserve(timed_repeats);
+
+        // CPU results must match the reference bit for bit: same code, same inputs, same processor.
+        const auto check_cpu = [&](const CpuResults& results, const char* label) {
+            for (std::size_t i = 0; i < n; ++i) {
+                const auto& got = results[i];
+                const auto& ref = cpu[i];
+                bool same = got.status == ref.status;
+                for (std::size_t k = 0; k < 3; ++k) {
+                    same = same && got.state.position[k] == ref.state.position[k] && got.state.velocity[k] == ref.state.velocity[k];
+                }
+                if (!same) throw std::runtime_error(std::string(label) + " differs from the reference at index " + std::to_string(i));
+            }
+        };
+
+        // CPU serial: 9 timed runs. The reference run above served as warm-up.
+        for (int repeat = 0; repeat < timed_repeats; ++repeat) {
+            const auto begin = std::chrono::steady_clock::now();
+            warpkep_bench::run_batch(inputs, cpu_serial, 1);
+            const auto end = std::chrono::steady_clock::now();
+            cpu_serial_ms.push_back(std::chrono::duration<double, std::milli>(end - begin).count());
+            check_cpu(cpu_serial, "CPU serial");  // outside the timed interval
+        }
+
+        // CPU parallel: one untimed warm-up (thread creation, caches), then 9 timed runs.
+        warpkep_bench::run_batch(inputs, cpu_parallel, threads);
+        for (int repeat = 0; repeat < timed_repeats; ++repeat) {
+            const auto begin = std::chrono::steady_clock::now();
+            warpkep_bench::run_batch(inputs, cpu_parallel, threads);
+            const auto end = std::chrono::steady_clock::now();
+            cpu_parallel_ms.push_back(std::chrono::duration<double, std::milli>(end - begin).count());
+            check_cpu(cpu_parallel, "CPU parallel");  // outside the timed interval
+        }
+
+        // GPU results must match the CPU reference within tolerance (other processor: not bitwise).
+        double max_error_r = 0.0;
+        double max_error_v = 0.0;
+        const auto check_gpu = [&] {
+            for (std::size_t i = 0; i < n; ++i) {
+                const auto& ref = cpu[i];
+                if (h_status.ptr[i] != Status::success || ref.status != Status::success) {
+                    throw std::runtime_error("Propagation failed at index " + std::to_string(i) + ": GPU " + warpkep::propagation_status_name(h_status.ptr[i]) + ", CPU " + warpkep::propagation_status_name(ref.status));
+                }
+                const double error_r = std::hypot(h_out.ptr[0 * n + i] - ref.state.position[0], h_out.ptr[1 * n + i] - ref.state.position[1], h_out.ptr[2 * n + i] - ref.state.position[2]);
+                const double error_v = std::hypot(h_out.ptr[3 * n + i] - ref.state.velocity[0], h_out.ptr[4 * n + i] - ref.state.velocity[1], h_out.ptr[5 * n + i] - ref.state.velocity[2]);
+                // !(e <= tol) also rejects NaN and infinity.
+                if (!(error_r <= tolerance) || !(error_v <= tolerance)) {
+                    throw std::runtime_error("GPU/CPU mismatch at index " + std::to_string(i) + ": error_r = " + std::to_string(error_r) + ", error_v = " + std::to_string(error_v));
+                }
+                max_error_r = std::max(max_error_r, error_r);
+                max_error_v = std::max(max_error_v, error_v);
+            }
+        };
+
+        const auto launch = [&] {
+            return warpkep::launch_kepler_soa_double(input, d_dt, mu, output, d_status.ptr, d_iter.ptr, n, stream.handle);
+        };
+
+        // Transfers, queued in the stream.
+        const auto copy_in = [&] {
+            require(cudaMemcpyAsync(d_in.ptr, h_in.ptr, 7 * n * sizeof(double), cudaMemcpyHostToDevice, stream.handle), "cudaMemcpyAsync (inputs)");
+        };
+        const auto copy_out = [&] {
+            require(cudaMemcpyAsync(h_out.ptr, d_out.ptr, 6 * n * sizeof(double), cudaMemcpyDeviceToHost, stream.handle), "cudaMemcpyAsync (states)");
+            require(cudaMemcpyAsync(h_status.ptr, d_status.ptr, n * sizeof(Status), cudaMemcpyDeviceToHost, stream.handle), "cudaMemcpyAsync (statuses)");
+            require(cudaMemcpyAsync(h_iter.ptr, d_iter.ptr, n * sizeof(int), cudaMemcpyDeviceToHost, stream.handle), "cudaMemcpyAsync (iterations)");
+        };
+
+        // One full pass as a user would run it: inputs in, one launch, results out, wait.
+        const auto full_pass = [&] {
+            copy_in();
+            require(launch(), "launch (with transfers)");
+            copy_out();
+            require(cudaStreamSynchronize(stream.handle), "cudaStreamSynchronize (with transfers)");
+        };
+
+        // Overwrite host outputs before a pass, so stale correct values cannot pass the check.
+        const auto poison_host_outputs = [&] {
+            std::fill(h_out.ptr, h_out.ptr + 6 * n, std::numeric_limits<double>::quiet_NaN());
+            std::fill(h_status.ptr, h_status.ptr + n, Status::invalid_input);
         };
 
         // 2. GPU work. The inner catch waits for queued work while the buffers still exist.
         try {
-            require(cudaMemcpyAsync(d_in.ptr, h_in.ptr, 7 * n * sizeof(double), cudaMemcpyHostToDevice, stream.handle), "cudaMemcpyAsync (inputs)");
-
-            // Warm-up, not timed.
+            // Kernel only: data already on the GPU. One untimed warm-up first.
+            copy_in();
             require(launch(), "launch (warm-up)");
             require(cudaStreamSynchronize(stream.handle), "cudaStreamSynchronize (warm-up)");
 
@@ -182,50 +262,56 @@ int main() {
 
                 float elapsed_ms = 0.0f;
                 require(cudaEventElapsedTime(&elapsed_ms, start.handle, stop.handle), "cudaEventElapsedTime");
-                if (!std::isfinite(elapsed_ms) || elapsed_ms <= 0.0f) {
-                    throw std::runtime_error("Invalid CUDA event duration");
-                }
+                if (!std::isfinite(elapsed_ms) || elapsed_ms <= 0.0f) throw std::runtime_error("Invalid CUDA event duration");
                 kernel_ms.push_back(static_cast<double>(elapsed_ms) / launches_per_repeat);
             }
 
-            // Results of the last timed launch; not ready before the synchronization.
-            require(cudaMemcpyAsync(h_out.ptr, d_out.ptr, 6 * n * sizeof(double), cudaMemcpyDeviceToHost, stream.handle), "cudaMemcpyAsync (states)");
-            require(cudaMemcpyAsync(h_status.ptr, d_status.ptr, n * sizeof(Status), cudaMemcpyDeviceToHost, stream.handle), "cudaMemcpyAsync (statuses)");
-            require(cudaMemcpyAsync(h_iter.ptr, d_iter.ptr, n * sizeof(int), cudaMemcpyDeviceToHost, stream.handle), "cudaMemcpyAsync (iterations)");
-            require(cudaStreamSynchronize(stream.handle), "cudaStreamSynchronize");
+            // Check the results of the last kernel-only launch.
+            poison_host_outputs();
+            copy_out();
+            require(cudaStreamSynchronize(stream.handle), "cudaStreamSynchronize (kernel only)");
+            check_gpu();
+
+            // With transfers: one untimed warm-up, then 9 timed full passes (one launch each, no division).
+            full_pass();
+            for (int repeat = 0; repeat < timed_repeats; ++repeat) {
+                poison_host_outputs();  // outside the timed interval
+                const auto begin = std::chrono::steady_clock::now();
+                full_pass();
+                const auto end = std::chrono::steady_clock::now();
+                gpu_total_ms.push_back(std::chrono::duration<double, std::milli>(end - begin).count());
+                check_gpu();            // outside the timed interval
+            }
         } catch (...) {
             const cudaError_t cleanup = cudaStreamSynchronize(stream.handle);
             if (cleanup != cudaSuccess) std::cerr << "Cleanup synchronization failed: " << cudaGetErrorString(cleanup) << '\n';
             throw;
         }
 
-        // 3. Check every GPU result against the CPU. Iteration counts may differ: not compared.
-        double max_error_r = 0.0;
-        double max_error_v = 0.0;
-
-        for (std::size_t i = 0; i < n; ++i) {
-            const auto& ref = cpu[i];
-            if (h_status.ptr[i] != Status::success || ref.status != Status::success) {
-                throw std::runtime_error("Propagation failed at index " + std::to_string(i) + ": GPU " + warpkep::propagation_status_name(h_status.ptr[i]) + ", CPU " + warpkep::propagation_status_name(ref.status));
+        // 3. Report: medians of 9 repeats, and throughput for the same n trajectories.
+        const auto report = [&](const char* label, const std::vector<double>& times_ms) {
+            for (double duration : times_ms) {
+                if (!std::isfinite(duration) || duration <= 0.0) {
+                    throw std::runtime_error(
+                        std::string(label) + ": invalid duration");
+                }
             }
+            const double ms = warpkep_bench::median(times_ms);
+            std::cout << "  " << std::left << std::setw(22) << label << std::right << std::setw(12) << ms << " ms  " << std::setw(14) << static_cast<double>(n) / (ms / 1000.0) << " propagations/s\n";
+        };
 
-            const double error_r = std::hypot(h_out.ptr[0 * n + i] - ref.state.position[0], h_out.ptr[1 * n + i] - ref.state.position[1], h_out.ptr[2 * n + i] - ref.state.position[2]);
-            const double error_v = std::hypot(h_out.ptr[3 * n + i] - ref.state.velocity[0], h_out.ptr[4 * n + i] - ref.state.velocity[1], h_out.ptr[5 * n + i] - ref.state.velocity[2]);
-
-            // !(e <= tol) also rejects NaN and infinity.
-            if (!(error_r <= tolerance) || !(error_v <= tolerance)) {
-                throw std::runtime_error("GPU/CPU mismatch at index " + std::to_string(i) + ": error_r = " + std::to_string(error_r) + ", error_v = " + std::to_string(error_v));
-            }
-            max_error_r = std::max(max_error_r, error_r);
-            max_error_v = std::max(max_error_v, error_v);
-        }
-
-        // 4. Report.
-        const double median_ms = warpkep_bench::median(kernel_ms);
-        std::cout << "Trajectories: " << n << '\n';
-        std::cout << "GPU vs CPU: all within " << tolerance << " (max error_r " << max_error_r << ", max error_v " << max_error_v << ")\n";
-        std::cout << "Kernel only, median of " << timed_repeats << " x " << launches_per_repeat << " launches: " << median_ms * 1000.0 << " us per launch\n";
-        std::cout << "Kernel throughput: " << static_cast<double>(n) / (median_ms / 1000.0) << " propagations/s\n";
+        std::cout << "Workload: " << n << " trajectories, normalized two-body, mu = 1, FP64\n";
+        std::cout << "CPU threads (parallel): " << threads << '\n';
+        std::cout << "Checks: CPU runs identical to the reference; GPU within " << tolerance << " (max error_r " << max_error_r << ", max error_v " << max_error_v << ")\n";
+        std::cout << "Median of " << timed_repeats << " repeats:\n";
+        std::cout << std::fixed << std::setprecision(4);
+        report("CPU serial", cpu_serial_ms);
+        report("CPU parallel", cpu_parallel_ms);
+        report("GPU kernel only", kernel_ms);
+        report("GPU with transfers", gpu_total_ms);
+        std::cout << std::defaultfloat;
+        std::cout << "GPU kernel only: data already on the GPU, CUDA events, " << launches_per_repeat << " launches per repeat\n";
+        std::cout << "GPU with transfers: copy in + 1 launch + 3 copies out + sync (pinned buffers; excludes AoS -> SoA packing)\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "Benchmark failed: " << e.what() << '\n';
