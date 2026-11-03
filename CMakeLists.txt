@@ -136,6 +136,19 @@ if(WARPKEP_BUILD_BENCHMARKS)
             warpkep::cuda
             Threads::Threads
         )
+
+        # Source commit for the benchmark metadata, read at configure time.
+        execute_process(
+            COMMAND git describe --always --dirty
+            WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+            OUTPUT_VARIABLE WARPKEP_GIT_COMMIT
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        if(NOT WARPKEP_GIT_COMMIT)
+            set(WARPKEP_GIT_COMMIT "unknown")
+        endif()
+        target_compile_definitions(warpkep_kepler_benchmark PRIVATE WARPKEP_GIT_COMMIT="${WARPKEP_GIT_COMMIT}")
     endif()
 endif()
 

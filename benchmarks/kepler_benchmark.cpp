@@ -3,6 +3,10 @@
 // (CUDA events, 32 launches per repeat), GPU with transfers (steady_clock).
 // Every timed result is checked outside the timed intervals.
 // stdout: CSV, one row per size. stderr: diagnostics and raw samples.
+// Source commit, injected by CMake at configure time (see CMakeLists.txt).
+#ifndef WARPKEP_GIT_COMMIT
+#define WARPKEP_GIT_COMMIT "unknown"
+#endif
 
 #include "kepler_workload.hpp"
 
@@ -102,6 +106,30 @@ void print_samples(std::size_t n, const char* label, const std::vector<double>& 
     std::cerr << "  n=" << n << ' ' << std::left << std::setw(20) << label << std::right << std::fixed << std::setprecision(4);
     for (double t : times_ms) std::cerr << ' ' << t;
     std::cerr << std::defaultfloat << '\n';
+}
+
+// Execution metadata, on stderr: without it, a timing cannot be interpreted.
+void print_metadata() {
+    // 1. GPU: which device, and its main characteristics.
+    int device = 0;
+    require(cudaGetDevice(&device), "cudaGetDevice");
+    cudaDeviceProp prop{};
+    require(cudaGetDeviceProperties(&prop, device), "cudaGetDeviceProperties");
+    std::cerr << "GPU: " << prop.name << " | compute " << prop.major << '.' << prop.minor << " | " << prop.multiProcessorCount << " SMs | " << std::fixed << std::setprecision(1) << prop.totalGlobalMem / (1024.0 * 1024.0 * 1024.0) << " GiB" << std::defaultfloat << '\n';
+
+    // 2. CUDA: driver (installed on the machine) and runtime (linked into the program).
+    //    Both are encoded as 1000 * major + 10 * minor, e.g. 12040 -> 12.4.
+    int driver = 0;
+    int runtime = 0;
+    require(cudaDriverGetVersion(&driver), "cudaDriverGetVersion");
+    require(cudaRuntimeGetVersion(&runtime), "cudaRuntimeGetVersion");
+    const auto version = [](int v) { return std::to_string(v / 1000) + '.' + std::to_string((v % 1000) / 10); };
+    std::cerr << "CUDA: driver " << version(driver) << " | runtime " << version(runtime) << '\n';
+
+    // 3. CPU side: host compiler, threads, source commit.
+    std::cerr << "Host compiler: " << __VERSION__ << '\n';
+    std::cerr << "CPU threads: " << max_threads << " used at most | " << std::thread::hardware_concurrency() << " available\n";
+    std::cerr << "Commit: " << WARPKEP_GIT_COMMIT << '\n';
 }
 
 // One CSV row.
@@ -272,12 +300,11 @@ SizeResult run_size(std::size_t n) {
 
     // 4. GPU work. The inner catch waits for queued work while the buffers still exist.
     try {
-        // Kernel only: data already on the GPU. One untimed warm-up first.
+        // Warm-up, not timed: full passes for 1 s, so GPU clocks are up and d_in is filled.
         const auto warm_begin = std::chrono::steady_clock::now();
         do {
             full_pass();
-        } while (std::chrono::steady_clock::now() - warm_begin
-                < std::chrono::seconds(1));
+        } while (std::chrono::steady_clock::now() - warm_begin < std::chrono::seconds(1));
 
         // Timed: [start] 32 launches [stop], no copy inside the interval.
         for (int repeat = 0; repeat < timed_repeats; ++repeat) {
@@ -333,6 +360,7 @@ SizeResult run_size(std::size_t n) {
 
 int main() {
     try {
+        print_metadata();
         constexpr std::size_t sizes[] = {1, 256, 257, 1000, 16384, 65536, 262144, 1048576};
 
         std::cerr << "Workload: normalized two-body, mu = 1, FP64 | CPU threads: up to " << max_threads << " (hardware: " << std::thread::hardware_concurrency() << ")\n";
