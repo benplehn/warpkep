@@ -98,15 +98,16 @@ jobs:
               cmake -S . -B build/cuda-ci -G Ninja \
                 -DCMAKE_BUILD_TYPE=Release \
                 -DBUILD_TESTING=OFF \
-                -DWARPKEP_BUILD_BENCHMARKS=OFF \
+                -DWARPKEP_BUILD_BENCHMARKS=ON \
                 -DWARPKEP_ENABLE_CUDA=ON \
                 -DWARPKEP_RUN_GPU_TESTS=OFF \
                 -DWARPKEP_BUILD_PYTHON=OFF \
                 -DCMAKE_CUDA_ARCHITECTURES=80
 
-              cmake --build build/cuda-ci \
+                cmake --build build/cuda-ci \
                 --target warpkep_cuda warpkep_cuda_compile_smoke \
                          warpkep_gpu_smoke warpkep_test_kepler_gpu \
+                         warpkep_kepler_benchmark \
                 --parallel 2
             '
 

@@ -130,6 +130,10 @@ void print_metadata() {
     std::cerr << "Host compiler: " << __VERSION__ << '\n';
     std::cerr << "CPU threads: " << max_threads << " used at most | " << std::thread::hardware_concurrency() << " available\n";
     std::cerr << "Commit: " << WARPKEP_GIT_COMMIT << '\n';
+    std::cerr << "Timed repeats: " << timed_repeats << '\n';
+    std::cerr << "Kernel launches per repeat: " << launches_per_repeat << '\n';
+    std::cerr << "GPU/CPU absolute error tolerance: " << tolerance << '\n';
+    std::cerr << "CPU parallel timing includes thread creation and joining.\n";
 }
 
 // One CSV row.
