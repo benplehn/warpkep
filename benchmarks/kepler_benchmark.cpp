@@ -290,37 +290,46 @@ int main() {
             throw;
         }
 
-        // 3. Report: medians of 9 repeats, and throughput for the same n trajectories.
-        const auto report = [&](const char* label, const std::vector<double>& times_ms) {
-            for (double duration : times_ms) {
-                if (!std::isfinite(duration) || duration <= 0.0) {
-                    throw std::runtime_error(
-                        std::string(label) + ": invalid duration");
-                }
+                // 3. Report: median time, throughput (scientific) and speedup over CPU serial.
+        const auto median_of = [](const char* label, const std::vector<double>& times_ms) {
+            for (double t : times_ms) {
+                if (!std::isfinite(t) || t <= 0.0) throw std::runtime_error(std::string(label) + ": invalid duration");
             }
-            const double ms = warpkep_bench::median(times_ms);
-            std::cout << "  " << std::left << std::setw(22) << label << std::right << std::setw(12) << ms << " ms  " << std::setw(14) << static_cast<double>(n) / (ms / 1000.0) << " propagations/s\n";
-            std::cout << label << " samples (ms):";
-            for (double duration : times_ms) {
-                std::cout << ' ' << duration;
-            }
+            return warpkep_bench::median(times_ms);
+        };
+        const double serial_ms = median_of("CPU serial", cpu_serial_ms);
+
+        const auto row = [&](const char* label, const std::vector<double>& times_ms) {
+            const double ms = median_of(label, times_ms);
+            std::cout << std::left << std::setw(22) << label << std::right
+                      << std::fixed << std::setprecision(3) << std::setw(12) << ms
+                      << std::scientific << std::setprecision(2) << std::setw(16) << static_cast<double>(n) / (ms / 1000.0)
+                      << std::fixed << std::setw(13) << serial_ms / ms << "x\n";
+        };
+        const auto samples = [](const char* label, const std::vector<double>& times_ms) {
+            std::cout << std::left << std::setw(20) << label << std::right << std::fixed << std::setprecision(3);
+            for (double t : times_ms) std::cout << ' ' << t;
             std::cout << '\n';
-        
         };
 
-        std::cout << "Workload: " << n << " trajectories, normalized two-body, mu = 1, FP64\n";
-        std::cout << "CPU threads (parallel): " << threads << '\n';
-        std::cout << "Checks: CPU runs identical to the reference; GPU within " << tolerance << " (max error_r " << max_error_r << ", max error_v " << max_error_v << ")\n";
-        std::cout << "Median of " << timed_repeats << " repeats:\n";
-        std::cout << std::fixed << std::setprecision(4);
-        report("CPU serial", cpu_serial_ms);
-        report("CPU parallel", cpu_parallel_ms);
-        report("GPU kernel only", kernel_ms);
-        report("GPU with transfers", gpu_total_ms);
-        std::cout << std::defaultfloat;
-        std::cout << "GPU kernel only: data already on the GPU, CUDA events, " << launches_per_repeat << " launches per repeat\n";
+        std::cout << "Workload: " << n << " trajectories, FP64, mu = 1 | CPU threads: " << threads << " (hardware: " << std::thread::hardware_concurrency() << ")\n";
+        std::cout << std::scientific << std::setprecision(1) << "Check: GPU vs CPU max error r " << max_error_r << ", v " << max_error_v << " (tolerance " << tolerance << ")\n\n";
+        std::cout << std::left << std::setw(22) << "Median of 9" << std::right << std::setw(12) << "time [ms]" << std::setw(16) << "prop/s" << std::setw(14) << "vs serial" << '\n';
+        row("CPU serial", cpu_serial_ms);
+        row("CPU parallel", cpu_parallel_ms);
+        row("GPU kernel only", kernel_ms);
+        row("GPU with transfers", gpu_total_ms);
+
+        std::cout << "\nSamples [ms]\n";
+        samples("CPU serial", cpu_serial_ms);
+        samples("CPU parallel", cpu_parallel_ms);
+        samples("GPU kernel only", kernel_ms);
+        samples("GPU with transfers", gpu_total_ms);
+
+        std::cout << std::defaultfloat << "\nGPU kernel only: data on the GPU, CUDA events, " << launches_per_repeat << " launches per repeat\n";
         std::cout << "GPU with transfers: copy in + 1 launch + 3 copies out + sync (pinned buffers; excludes AoS -> SoA packing)\n";
         return 0;
+        
     } catch (const std::exception& e) {
         std::cerr << "Benchmark failed: " << e.what() << '\n';
         return 1;
