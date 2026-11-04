@@ -89,3 +89,31 @@ def test_kepler_mixed_batch():
 
     # Chaque trajectoire en échec doit produire six NaN.
     assert np.isnan(actual[:, ~success]).all()
+
+
+def test_kepler_empty_batch():
+    """Un lot vide doit renvoyer trois sorties vides sans erreur."""
+    with cp.cuda.Device(0):
+        states = cp.empty((6, 0), dtype=cp.float64)
+        durations = cp.empty((0,), dtype=cp.float64)
+
+        out, statuses, iterations = warpkep.propagate_kepler(states, durations, mu=1.0)
+
+        assert out.shape == (6, 0)
+        assert statuses.shape == (0,)
+        assert iterations.shape == (0,)
+        assert out.dtype == np.dtype("float64")
+        assert statuses.dtype == np.dtype("int32")
+        assert iterations.dtype == np.dtype("int32")
+
+
+@pytest.mark.parametrize("mu", [0.0, -1.0, np.nan, np.inf])
+def test_kepler_rejects_invalid_mu(mu):
+    """Un paramètre gravitationnel invalide doit faire rejeter tout le lot."""
+    with cp.cuda.Device(0):
+        # Garder les autres entrées valides pour isoler le contrôle de mu.
+        states = cp.asarray([[1.0], [0.0], [0.0], [0.0], [1.0], [0.0]], dtype=cp.float64)
+        durations = cp.asarray([1.0], dtype=cp.float64)
+
+        with pytest.raises(ValueError, match="mu"):
+            warpkep.propagate_kepler(states, durations, mu=mu)
