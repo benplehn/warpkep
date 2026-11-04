@@ -24,9 +24,7 @@ __global__ void kepler_propagation_soa_kernel(
     int* iterations,
     std::size_t n
 ) {
-    const std::size_t i =
-        static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-
+    const std::size_t i = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= n) {
         return;
     }
@@ -94,9 +92,7 @@ cudaError_t launch_kepler_soa_double(
 
     // 2. Ceiling division without computing n + 255 (could overflow).
     constexpr unsigned int threads_per_block = 256;
-    const std::size_t block_count =
-        n / threads_per_block
-        + (n % threads_per_block != 0);
+    const std::size_t block_count = n / threads_per_block + (n % threads_per_block != 0);
 
     // 3. CUDA expects an unsigned int: check before converting.
     if (block_count > std::numeric_limits<unsigned int>::max()) {
