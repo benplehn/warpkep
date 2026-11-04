@@ -110,6 +110,13 @@ if(WARPKEP_ENABLE_CUDA)
     )
 endif()
 
+if(WARPKEP_BUILD_PYTHON AND WARPKEP_ENABLE_CUDA)
+    nanobind_add_module(_cuda bindings/cuda_module.cpp)
+    target_compile_features(_cuda PRIVATE cxx_std_17)
+    target_link_libraries(_cuda PRIVATE warpkep::cuda)
+    install(TARGETS _cuda LIBRARY DESTINATION warpkep)
+endif()
+
 
 option(WARPKEP_BUILD_BENCHMARKS "Build CPU benchmarks" OFF)
 
