@@ -1,6 +1,6 @@
 # warpkep
 
-warpkep is a C++/CUDA library in development for orbital propagation and trajectory search in batches, with a Python interface planned.
+warpkep is a C++/CUDA library in development for orbital propagation and trajectory search in batches, with a synchronous Python/CuPy interface for FP64 Kepler batches.
 
 The aim is to make these building blocks usable in mission design studies and trajectory optimisation. GTOC problems will serve as applications and benchmarks.
 
@@ -11,11 +11,11 @@ The repository currently contains:
 * A generic universal-variable Kepler propagator, written as host/device C++ templates for float and double.
 * An experimental FP64 CUDA batch API, built into the library: `warpkep::launch_kepler_soa_double` in `<warpkep/cuda/kepler.hpp>`, CMake target `warpkep::cuda`.
 * Five CPU tests and one GPU test registered with CTest.
-* Python bindings that only expose the version.
+* Python bindings exposing the version and `warpkep.propagate_kepler`, with CuPy GPU arrays and synchronous completion.
 
 The CPU propagator is checked against pykep and heyoka in CI. GPU validation is currently limited to the cases run by `examples/kepler_gpu_smoke.cpp`. GPU performance has not been measured yet.
 
-See [docs/architecture.md](docs/architecture.md) for the code layout and [docs/numerical\_contract.md](docs/numerical_contract.md) for the API contract.
+See [docs/architecture.md](docs/architecture.md) for the code layout and [docs/numerical\_contract.md](docs/numerical_contract.md) for the API contract. See [docs/python_cuda.md](docs/python_cuda.md) for Python/CuPy usage, streams, error handling and the TD 10 validation.
 
 ## Build
 
@@ -116,7 +116,6 @@ Batch of 200,000 two-body propagations (mu = 1, FP64), median of 5 runs, Apple M
 * Numerical integration with perturbations and thrust.
 * Lambert transfers and rendezvous cost evaluation.
 * Beam search for trajectory sequences.
-* Python bindings and a batch API for data already on the GPU.
 
 Numerical routines start in double precision and are checked against independent references. Benchmarks will report kernel execution time and total time, including data transfers.
 
