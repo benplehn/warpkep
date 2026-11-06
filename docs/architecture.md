@@ -41,6 +41,26 @@ solve_lambert_cpu<double>(r1, r2, dt, mu, arc, options)
 
 Every stage returns a** **`LambertStatus`; the first failure stops the call and returns six NaN velocities. The computation finishes before returning. The test closes each solution with** **`propagate_kepler_cpu`, which gives a check independent of the Lambert formulas.
 
+## CPU Lambert multirevolution
+
+
+| File                                                            | Role                                                                                                            |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `<span>include/warpkep/detail/lambert_cpu.hpp</span>`           | Zero-revolution primitives and endpoint velocity reconstruction                                                 |
+| `<span>include/warpkep/detail/lambert_multi_rev_cpu.hpp</span>` | Multirevolution evaluation, minimum search, feasibility classification and branch solving                       |
+| `<span>include/warpkep/lambert_status.hpp</span>`               | Lambert statuses, including`<span><span>no_solution</span></span>` and `<span><span>near_minimum</span></span>` |
+| `<span>tests/test_lambert_multi_rev.cpp</span>`                 | Multirevolution validation; CTest name`<span><span>lambert_multi_rev</span></span>`                             |
+
+`<span><span>solve_lambert_multi_rev_cpu<double></span></span>` prepares the geometry once. For M = 0, it follows the existing root-solving path. For M > 0, it computes one minimum, classifies the requested duration and solves the two branches independently. Both branches reuse the existing velocity reconstruction.
+
+Four-argument overloads of** **`<span><span>evaluate_lambert_time</span></span>` and** **`<span><span>evaluate_lambert_derivatives</span></span>` add the revolution contribution. Existing three-argument calls remain unchanged.
+
+Results use two fixed-capacity slots with individual statuses and an overall completeness flag. A host loop can enumerate M in increasing order through** **`<span><span>solve_lambert_multi_rev_prepared</span></span>`, reusing the prepared geometry. No dynamic container or global cache is introduced into the scalar core.
+
+CMake target** **`<span><span>warpkep_test_lambert_multi_rev</span></span>` is registered with CTest. The existing CPU workflow builds and runs it automatically.
+
+Lambert remains CPU-only: its scalar functions are not yet annotated for device execution, and no Lambert kernel, launcher or CuPy binding is provided.
+
 ## GPU Kepler call path
 
 ```text

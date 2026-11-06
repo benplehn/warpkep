@@ -190,6 +190,10 @@ if(BUILD_TESTING)
     add_executable(warpkep_test_lambert tests/test_lambert.cpp)
     target_link_libraries(warpkep_test_lambert PRIVATE warpkep)
     add_test(NAME lambert COMMAND warpkep_test_lambert)
+
+    add_executable(warpkep_test_lambert_multi_rev tests/test_lambert_multi_rev.cpp)
+    target_link_libraries(warpkep_test_lambert_multi_rev PRIVATE warpkep)
+    add_test(NAME lambert_multi_rev COMMAND warpkep_test_lambert_multi_rev)
 endif()
 
 

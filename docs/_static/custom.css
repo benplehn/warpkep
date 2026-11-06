@@ -1,0 +1,18 @@
+/* Keep mathematical and API tables readable at narrow viewport widths. */
+.content {
+  max-width: 58rem;
+}
+
+.sidebar-brand-text {
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+
+table.docutils {
+  width: 100%;
+}
+
+table.docutils td,
+table.docutils th {
+  vertical-align: top;
+}
