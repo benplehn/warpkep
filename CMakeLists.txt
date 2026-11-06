@@ -186,6 +186,10 @@ if(BUILD_TESTING)
 
     add_executable(warpkep_cpu_samples validation/cpu_propagation_samples.cpp)
     target_link_libraries(warpkep_cpu_samples PRIVATE warpkep)
+
+    add_executable(warpkep_test_lambert tests/test_lambert.cpp)
+    target_link_libraries(warpkep_test_lambert PRIVATE warpkep)
+    add_test(NAME lambert COMMAND warpkep_test_lambert)
 endif()
 
 
