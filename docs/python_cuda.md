@@ -1,24 +1,26 @@
-# Interface Python/CuPy — Kepler FP64
+# Python/CuPy propagation
 
-`warpkep.propagate_kepler(states, durations, *, mu=1.0)` propage un lot à deux corps et renvoie `(out, statuses, iterations)`, trois tableaux CuPy prêts au retour.
+`warpkep.propagate_kepler(states, durations, *, mu=1.0)` propagates a batch of two-body states on the GPU. It returns `(out, statuses, iterations)` as CuPy arrays and waits until the outputs are ready.
 
-## Contrat
+Install warpkep with CUDA enabled and a compatible CuPy package. The default CPU-only installation provides version information; it cannot run propagation. Lambert has no Python binding yet.
 
-| Argument ou sortie | Forme / type | Signification |
+## Arrays and units
+
+| Argument / result | Shape and dtype | Meaning |
 | --- | --- | --- |
-| `states` | `(6, N)`, `float64`, ordre C | Lignes `rx, ry, rz, vx, vy, vz` ; mémoire GPU CuPy |
-| `durations` | `(N,)`, `float64`, contigu | Durée relative par trajectoire, éventuellement négative ; même GPU que `states` |
-| `mu` | Scalaire fini, strictement positif | Paramètre gravitationnel commun au lot |
-| `out` | `(6, N)`, `float64`, ordre C | États propagés sur le GPU de `states` |
-| `statuses` | `(N,)`, `int32` | Code de résultat par trajectoire |
-| `iterations` | `(N,)`, `int32` | Nombre d'itérations par trajectoire |
+| `states` | `(6, N)`, `float64`, C-contiguous | Rows `rx, ry, rz, vx, vy, vz`, in CuPy GPU memory |
+| `durations` | `(N,)`, `float64`, contiguous | Relative duration per trajectory; same GPU as `states` |
+| `mu` | Finite, positive scalar | Gravitational parameter shared by the batch |
+| `out` | `(6, N)`, `float64`, C-contiguous | Propagated states on the input GPU |
+| `statuses` | `(N,)`, `int32` | Numerical result per trajectory |
+| `iterations` | `(N,)`, `int32` | Solver refinement counts |
 
-Les unités doivent être cohérentes : positions en L, vitesses en L/T, durées en T, `mu` en L³/T². Aucune conversion d'unité, de dtype ou de disposition des entrées n'est implicite. Les entrées restent inchangées ; CuPy alloue les trois sorties. Un lot vide renvoie trois sorties vides.
+Use consistent units: positions in L, velocities in L/T, durations in T and `mu` in L³/T². Durations can be positive, zero or negative; see the [numerical contract](numerical_contract.md) for the supported motion. The function leaves inputs unchanged and allocates all three outputs. An empty batch returns three empty arrays.
 
-## Exemple
+## Example
 
 ```python
-import numpy as np
+import math
 import cupy as cp
 import warpkep
 from warpkep import _cuda
@@ -27,57 +29,63 @@ with cp.cuda.Device(0):
     states = cp.zeros((6, 257), dtype=cp.float64)
     states[0, :] = 1.0
     states[4, :] = 1.0
-    durations = cp.full(257, np.pi / 2, dtype=cp.float64)
-    out, statuses, iterations = warpkep.propagate_kepler(states, durations, mu=1.0)
-    if not bool(cp.all(statuses == _cuda.SUCCESS).item()):
-        raise RuntimeError("Examiner les statuts des trajectoires en échec")
+    durations = cp.full(257, math.pi / 2.0, dtype=cp.float64)
+
+    out, statuses, iterations = warpkep.propagate_kepler(
+        states, durations, mu=1.0
+    )
+    valid = statuses == _cuda.SUCCESS
+    if not bool(cp.all(valid).item()):
+        raise RuntimeError("Inspect the statuses of failed trajectories")
     print(cp.asnumpy(out[:, 0]))
 ```
 
-Référence analytique en unités normalisées : après un quart de période, l'état attendu est `(0, 1, 0, -1, 0, 0)`. Les lectures `.item()` et `cp.asnumpy` servent ici à l'inspection sur CPU ; le passage des états au binding ne transfère pas leurs éléments vers la RAM.
+After a quarter period on a unit circular orbit, the state should be `(0, 1, 0, -1, 0, 0)` to numerical precision. `cp.asnumpy` copies the first result to the CPU for printing. The propagation itself keeps the arrays on the GPU.
 
-## Streams et mémoire
+Convert host data explicitly with `cp.asarray(host_states, dtype=cp.float64, order="C")`. The function does not convert input units, dtypes or layouts. For a non-contiguous slice such as `states[:, ::2]`, make a contiguous copy before calling it.
 
-L'API utilise le stream CuPy courant du GPU de `states`. Elle attend ce stream avant l'import nanobind, puis le binding attend la fin du kernel et de la copie des statuts. L'appel est synchrone pour son appelant, même si le binding libère le GIL.
+## Statuses and errors
 
-Préparer les entrées sur ce stream. Si un autre stream les produit, l'appelant doit attendre ce producteur avant l'appel. L'attente du seul stream courant ne suffit pas dans ce cas. Exclure tout accès concurrent incompatible aux buffers pendant l'appel.
+Check each trajectory against the constants in `warpkep._cuda`:
 
-CuPy possède les cinq tableaux visibles depuis Python. Le binding alloue en plus un tampon GPU `Status`, le copie vers la sortie `int32`, puis le libère par RAII. Ce tampon adapte l'API CUDA typée existante ; il ajoute allocation, copie GPU/GPU et libération à chaque appel. Il ne s'agit pas d'une interface asynchrone ni sans allocation.
-
-## Erreurs
-
-| Situation | Résultat |
+| Constant | Meaning |
 | --- | --- |
-| Entrée non CuPy, mauvais dtype ou contiguïté incompatible | `TypeError` |
-| Mauvaise forme de `states`, tailles de lots incohérentes, GPU différents ou `mu` invalide | `ValueError` |
-| Rang ou forme fixe de `durations` refusés par nanobind | `TypeError` |
-| Débordement du calcul des tailles en octets | `OverflowError` |
-| Échec du runtime CUDA | `RuntimeError` ; sorties potentiellement incomplètes |
-| Échec orbital individuel | Code dans `statuses`, six NaN dans la colonne de sortie concernée |
+| `SUCCESS` | Numerical termination criteria met |
+| `INVALID_INPUT` | Invalid state components, duration or other numerical input |
+| `UNSUPPORTED_CASE` | Excluded motion, such as radial propagation with non-zero duration |
+| `NOT_CONVERGED` | Solver could not meet its termination criteria |
+| `NUMERICAL_FAILURE` | Unusable intermediate arithmetic |
 
-Les codes sont exposés dans `warpkep._cuda` : `SUCCESS`, `INVALID_INPUT`, `UNSUPPORTED_CASE`, `NOT_CONVERGED`, `NUMERICAL_FAILURE`. Vérifier les statuts avant d'exploiter les états. Un `mu` invalide fait rejeter tout le lot, contrairement à un état individuel invalide.
+When a trajectory fails, its output column contains six NaN values. Other trajectories continue normally. Check statuses before using the states.
 
-## Qui appelle qui ?
+Errors affecting the whole call raise an exception:
 
-| Emplacement | Rôle / lieu d'exécution |
+| Situation | Result |
 | --- | --- |
-| `python/warpkep/__init__.py` | Façade publique ; charge les dépendances GPU seulement à l'appel |
-| `python/warpkep/cuda.py` | Python : sélection du GPU, allocations CuPy, choix et attente du stream |
-| `bindings/cuda_module.cpp` | CPU : vues nanobind, contrôles, vues SoA, tampon de statuts et attente finale |
-| `src/cuda/kepler.cu` : `launch_kepler_soa_double` | CPU : soumission du kernel dans le stream fourni |
-| `src/cuda/kepler.cu` : `kepler_propagation_soa_kernel<double>` | GPU : un thread par trajectoire appelle le calcul orbital existant |
+| Non-CuPy input, wrong dtype or incompatible contiguity | `TypeError` |
+| Wrong `states` shape, mismatched batch lengths, different GPUs or invalid `mu` | `ValueError` |
+| Wrong `durations` rank rejected by nanobind | `TypeError` |
+| Checked byte-size overflow | `OverflowError` |
+| CUDA runtime failure | `RuntimeError`; outputs may be incomplete |
 
-## Installation et validation du prototype
+An invalid `mu` rejects the whole call, even for an empty batch. Invalid individual states are reported in `statuses`. If CUDA execution fails, discard the batch outputs.
 
-Depuis la racine du dépôt, dans un environnement Python avec CuPy compatible et un GPU NVIDIA disponible :
+## Streams and memory
+
+The wrapper selects the GPU containing `states` and uses its current CuPy stream. It waits for that stream before passing arrays to nanobind, then waits for the kernel and status copy before returning. The binding releases the GIL during execution, and the wrapper restores the previously selected device afterward.
+
+Prepare inputs on the same stream. If another stream produces them, wait for it first, using an event or explicit synchronization. The wrapper cannot infer that dependency. Avoid concurrent writes to the buffers while the call is running.
+
+CuPy owns the input and output arrays. The binding also allocates a temporary GPU status buffer and copies it to the `int32` status output. Each call therefore includes allocation, a device-to-device status copy and synchronization.
+
+The [C++ CUDA API](api.md#c-cuda-propagation) accepts preallocated buffers and returns before execution finishes. Use it when you need to manage storage and synchronization yourself.
+
+## Installation and checks
+
+Follow the [CUDA installation instructions](installation.md#pythoncupy-with-cuda), then run the tests on a machine with an NVIDIA GPU:
 
 ```bash
-python -m pip install . -Ccmake.define.WARPKEP_ENABLE_CUDA=ON -Ccmake.define.CMAKE_CUDA_ARCHITECTURES=native -Ccmake.define.BUILD_TESTING=OFF -Cbuild.tool-args=-j2
 python -m pytest tests/test_python_cuda.py -q
 ```
 
-Le toolkit CUDA est nécessaire pour compiler ; CuPy et pytest sont à fournir séparément dans cet environnement. Par défaut, `python -m pip install .` construit la version CPU sans activer CUDA. L'import de `warpkep` charge `_core` ; CuPy et `_cuda` sont chargés lors du premier appel à `propagate_kepler`.
-
-Résultat rapporté sur Kaggle pour ce TD : **6 passed** — lot mixte de 257 trajectoires comparées aux références analytiques en FP64 (normes des erreurs position/vitesse ≤ 1e-12 et contrôle des statuts/NaN), lot vide et quatre valeurs invalides de `mu`. Le test numérique utilise un stream non bloquant. Sans CuPy, le fichier pytest est ignoré ; ce skip ne valide pas le GPU.
-
-Ces résultats valident le périmètre du prototype TD 10 ; ils ne constituent ni une mesure de performance de l'interface ni l'achèvement de la phase 1 du projet.
+The tests use a non-blocking stream and a mixed batch of 257 trajectories. They compare states with analytical results and check individual failures, zero duration, empty batches and invalid `mu`. The file is skipped if CuPy is missing. See [validation](validation.md) for the full test coverage.

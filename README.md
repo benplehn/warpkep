@@ -1,126 +1,103 @@
 # warpkep
 
-warpkep is a C++/CUDA library in development for orbital propagation and trajectory search in batches, with a synchronous Python/CuPy interface for FP64 Kepler batches.
+**Two-body astrodynamics in C++17 and CUDA.**
 
-The aim is to make these building blocks usable in mission design studies and trajectory optimisation. GTOC problems will serve as applications and benchmarks.
+warpkep is a C++17/CUDA library for Kepler propagation and Lambert transfers, including multi-revolution solutions. It is being developed for mission design and trajectory optimisation, with batch propagation on NVIDIA GPUs and an experimental Python/CuPy interface.
 
-## Status
+[Documentation](docs/index.md) · [Installation](docs/installation.md) · [Lambert guide](docs/lambert.md) · [API reference](docs/api.md) · [Contributing](CONTRIBUTING.md)
 
-The repository currently contains:
+## Current capabilities
 
-* A generic universal-variable Kepler propagator, written as host/device C++ templates for float and double.
-* An experimental FP64 CUDA batch API, built into the library: `warpkep::launch_kepler_soa_double` in `<warpkep/cuda/kepler.hpp>`, CMake target `warpkep::cuda`.
-* Five CPU tests and one GPU test registered with CTest.
-* Python bindings exposing the version and `warpkep.propagate_kepler`, with CuPy GPU arrays and synchronous completion.
+The current version is `0.1.0.dev0`. The numerical interfaces are experimental, and headers under `warpkep/detail/` may change during development.
 
-The CPU propagator is checked against pykep and heyoka in CI. GPU validation is currently limited to the cases run by `examples/kepler_gpu_smoke.cpp`. GPU performance has not been measured yet.
+| Capability | Interface | Precision | Availability |
+| --- | --- | --- | --- |
+| Scalar Kepler propagation | Internal C++, host/device templates | FP32 / FP64 | Implemented; FP64 reference validation |
+| Batched Kepler propagation | C++ CUDA, device-resident SoA arrays | FP64 | Experimental |
+| Batched Kepler propagation | Python / CuPy, synchronous | `float64` | Experimental; CUDA build required |
+| Zero-revolution Lambert | Internal C++, short and long arcs | FP64 | Implemented |
+| Multi-revolution Lambert | Internal C++, fixed `M`, two branch slots | FP64 | Implemented; analytical tests for `M = 1, 2` |
 
-See [docs/architecture.md](docs/architecture.md) for the code layout and [docs/numerical\_contract.md](docs/numerical_contract.md) for the API contract. See [docs/python_cuda.md](docs/python_cuda.md) for Python/CuPy usage, streams, error handling and the TD 10 validation.
+Lambert runs on the CPU through C++. Its results distinguish a failed computation, a flight time that is too short for the requested revolution count, and a time too close to the minimum to resolve the two branches. The [numerical contract](docs/numerical_contract.md) describes the supported inputs, tolerances and failure behaviour.
 
-## Build
+## Build and test on CPU
 
-Requirements:
-
-* A C++17 compiler
-* CMake 3.24 or newer
-* For the CUDA library: a CUDA toolkit (an NVIDIA GPU is only needed to run GPU tests)
-
-### CPU only
-
-Works on macOS without CUDA.
+Requires a C++17 compiler and CMake 3.24 or newer. CUDA is optional; the CPU build works on macOS and Linux without a CUDA toolkit.
 
 ```bash
 cmake -S . -B build/cpu \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_TESTING=ON \
   -DWARPKEP_ENABLE_CUDA=OFF
-
 cmake --build build/cpu --parallel 2
 ctest --test-dir build/cpu --output-on-failure
-./build/cpu/warpkep_smoke
 ```
 
-Expected output of `warpkep_smoke`:
+CI runs all seven CPU tests, including zero-revolution and multi-revolution Lambert, on each push and pull request. It also compares Kepler propagation with pykep and heyoka. Independent Lambert comparisons are still planned.
 
-```text
-warpkep: CPU development environment ready
-warpkep version: 0.1.0.dev0
+## Solve a multi-revolution Lambert problem
+
+The CPU solver is header-only. Request a revolution count and check the status of each returned solution:
+
+```cpp
+#include <warpkep/detail/lambert_multi_rev_cpu.hpp>
+#include <cmath>
+
+namespace wd = warpkep::detail;
+
+int main() {
+    const wd::Vector3<double> r1{1.0, 0.0, 0.0};
+    const wd::Vector3<double> r2{0.0, 1.0, 0.0};
+    const double pi = std::acos(-1.0);
+    const auto transfer = wd::solve_lambert_multi_rev_cpu<double>(
+        r1, r2, pi / 2.0 + 2.0 * pi, 1.0, wd::LambertArc::short_arc, 1
+    );
+
+    for (int i = 0; i < transfer.slot_count; ++i) {
+        const auto& solution = transfer.solutions[i];
+        if (solution.result.status != warpkep::LambertStatus::success) {
+            continue;
+        }
+        // Use solution.result.departure_velocity and arrival_velocity.
+        // Identify this solution with (revolutions, arc, branch).
+    }
+    return transfer.complete ? 0 : 1;
+}
 ```
 
-### CUDA, compile only (no GPU)
+Use `slot_count` as the loop bound: if only the right branch succeeds, it remains in slot 1. The [complete example](examples/lambert_multi_rev.cpp) checks that both solutions reach the target and shows how to reuse the geometry for several revolution counts.
 
-Compiles and links the CUDA targets in the development container, without running them.
+## Python and CUDA
 
 ```bash
-docker build --platform linux/amd64 \
-  -f docker/Dockerfile.cuda -t warpkep-cuda:dev docker
+# CPU package: version information, without the CUDA extension.
+python -m pip install .
 
-docker run --rm --platform linux/amd64 \
-  -v "$PWD:/workspace" -w /workspace warpkep-cuda:dev \
-  bash -c '
-    set -e
-    cmake -S . -B build/cuda -G Ninja \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DBUILD_TESTING=OFF \
-      -DWARPKEP_ENABLE_CUDA=ON \
-      -DWARPKEP_RUN_GPU_TESTS=OFF \
-      -DCMAKE_CUDA_ARCHITECTURES=80
-    cmake --build build/cuda \
-      --target warpkep_cuda warpkep_cuda_compile_smoke warpkep_gpu_smoke
-  '
+# On a machine with a CUDA toolkit; install compatible CuPy separately.
+python -m pip install . \
+  -Ccmake.define.WARPKEP_ENABLE_CUDA=ON \
+  -Ccmake.define.CMAKE_CUDA_ARCHITECTURES=native \
+  -Ccmake.define.BUILD_TESTING=OFF
 ```
 
-### CUDA with a GPU
+`warpkep.propagate_kepler(states, durations, mu=...)` takes CuPy arrays of shape `(6, N)` and `(N,)`. It returns the propagated states, statuses and iteration counts on the GPU, ready when the call returns. The [Python/CuPy guide](docs/python_cuda.md) covers array layout, streams and error handling.
 
-Builds everything and runs the CPU and GPU tests.
+## Build the documentation
+
+The documentation needs Python 3.11+ and can be built without compiling the library:
 
 ```bash
-cmake -S . -B build/gpu \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DBUILD_TESTING=ON \
-  -DWARPKEP_ENABLE_CUDA=ON \
-  -DWARPKEP_RUN_GPU_TESTS=ON \
-  -DCMAKE_CUDA_ARCHITECTURES=native
-
-cmake --build build/gpu --parallel 2
-ctest --test-dir build/gpu --output-on-failure
+python -m pip install -r docs/requirements.txt
+python -m sphinx -n -W --keep-going -b html docs build/docs
+python -m http.server 8000 --directory build/docs
 ```
 
-Optional memory check:
+Open [localhost:8000](http://localhost:8000). A separate CI workflow builds the documentation and runs the C++ Lambert example on each push and pull request.
 
-```bash
-compute-sanitizer --tool memcheck --leak-check full --error-exitcode 1 \
-  ./build/gpu/warpkep_gpu_smoke
-```
+## Project direction
 
-## CPU baseline
-
-```bash
-cmake -S . -B build/bench -DCMAKE_BUILD_TYPE=Release -DWARPKEP_BUILD_BENCHMARKS=ON
-cmake --build build/bench --target warpkep_cpu_baseline
-./build/bench/warpkep_cpu_baseline 200000 4
-```
-
-Batch of 200,000 two-body propagations (mu = 1, FP64), median of 5 runs, Apple M1 Pro, Apple clang 21:
-
-
-| Threads | Propagations/s |
-| ------- | -------------- |
-| 1       | 5.38 M         |
-| 4       | 20.27 M        |
-
-## Planned work
-
-* Structured GPU validation: independent references, parabolic and hyperbolic cases, edge cases, invariants and round trips.
-* CPU/GPU benchmarks: kernel time and total time including transfers, against the parallel CPU baseline.
-* Numerical integration with perturbations and thrust.
-* Lambert transfers and rendezvous cost evaluation.
-* Beam search for trajectory sequences.
-
-Numerical routines start in double precision and are checked against independent references. Benchmarks will report kernel execution time and total time, including data transfers.
+The next steps are broader Lambert validation and a public API, followed by GPU batching and trajectory search. See the [roadmap](docs/roadmap.md) for planned work and the [benchmark guide](docs/benchmarks.md) for performance measurements.
 
 ## License
 
-Copyright 2026 Benjamin von Plehn.
-
-Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
+Copyright 2026 Benjamin von Plehn. Licensed under the [Apache License, Version 2.0](LICENSE).

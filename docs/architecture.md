@@ -1,163 +1,128 @@
 # Architecture
 
-# Architecture
+The numerical routines live in headers, with CUDA and Python wrappers handling batches, memory and execution. Kepler routines compile for CPU and GPU. Lambert currently runs only on the CPU.
 
-Where each piece of warpkep lives, and how a call travels through the CPU Lambert solver and the GPU Kepler batch.
+## Repository layout
 
-## Files
+| Path | Purpose |
+| --- | --- |
+| `include/warpkep/detail/` | Internal vector/math utilities, Kepler primitives and CPU Lambert routines |
+| `include/warpkep/cuda/kepler.hpp` | Experimental public CUDA propagation launcher |
+| `include/warpkep/cartesian_soa.hpp` | Borrowed six-component state views |
+| `include/warpkep/{kepler,lambert}_status.hpp` | Public result-status enums |
+| `src/cuda/kepler.cu` | Compiled FP64 batch kernel and host launcher |
+| `src/version.cpp` | Core version implementation |
+| `bindings/` | nanobind version and CUDA extension modules |
+| `python/warpkep/` | Python facade and CuPy allocation/stream adapter |
+| `examples/` | CPU Lambert example, CUDA compilation check and GPU smoke program |
+| `tests/` | C++ numerical/GPU tests and Python/CuPy tests |
+| `validation/` | Shared Kepler cases, sample generation and independent references |
+| `benchmarks/` | CPU baseline and CPU/GPU timing harness |
+| `docker/` | CUDA compilation and pinned reference environments |
+| `docs/` | Sphinx/MyST documentation, independently buildable without CUDA |
 
+## Scalar Kepler path
 
-| File                                                                        | Contents                                                                              | Visibility                   |
-| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------- |
-| `include/warpkep/detail/config.hpp`                                         | `WARPKEP_HD` macro (`__host__ __device__` under nvcc)                                 | Internal                     |
-| `include/warpkep/detail/vector3.hpp`, `math.hpp`, `numeric_limits.hpp`      | Small vector type,`norm3`, limits for host and device                                 | Internal                     |
-| `include/warpkep/detail/stumpff.hpp`                                        | Stumpff functions C(z), S(z)                                                          | Internal                     |
-| `include/warpkep/detail/universal_kepler.hpp`, `solve_universal_kepler.hpp` | Universal Kepler equation and its iterative solver                                    | Internal                     |
-| `include/warpkep/detail/kepler_cpu.hpp`                                     | `CartesianState`, `KeplerPropagationResult`, scalar propagator `propagate_kepler_cpu` | Internal                     |
-| `include/warpkep/detail/lambert_cpu.hpp`                                    | CPU Lambert solver, FP64, zero revolution; entry point`solve_lambert_cpu<double>`     | Internal                     |
-| `include/warpkep/lambert_status.hpp`                                        | `LambertStatus`                                                                       | Public                       |
-| `include/warpkep/cartesian_soa.hpp`                                         | `CartesianSoAConstView`, `CartesianSoAView`(six pointers, no ownership)               | Public                       |
-| `include/warpkep/kepler_status.hpp`                                         | `KeplerPropagationStatus`, `propagation_status_name`                                  | Public                       |
-| `include/warpkep/cuda/kepler.hpp`                                           | Declaration of`launch_kepler_soa_double` and its contract                             | Public                       |
-| `src/cuda/kepler.cu`                                                        | Kernel`kepler_propagation_soa_kernel<T>`(file-local) and the launcher definition      | Compiled into`warpkep::cuda` |
-| `tests/test_lambert_cpu.cpp`                                                | Lambert analytical cases, Kepler closure, parabolic neighbourhood, failure paths      | Test                         |
-| `examples/cuda_smoke.cu`                                                    | Compile-only kernels covering the internal primitives on the device                   | Example                      |
-| `examples/kepler_gpu_smoke.cpp`                                             | Plain C++ program using the library on a 257-trajectory batch                         | Example / GPU test           |
+```text
+propagate_kepler_cpu(initial, dt, mu, options)
+  validate inputs and supported motion
+  compute orbital quantities
+  solve_universal_kepler(...)
+    evaluate_universal_kepler(...)
+      stumpff(...)
+  reconstruct state with Lagrange coefficients
+  return state, status, iterations
+```
 
-The Kepler primitives in** **`detail/` are templated on** **`T` (float or double) and marked** **`WARPKEP_HD`, so the same source compiles for the CPU and the GPU. The Lambert solver is CPU-only for now: it is not marked** **`WARPKEP_HD` and its entry point accepts FP64 only. Only the FP64 Kepler launcher is public on the GPU side.
+The GPU kernel calls `propagate_kepler_cpu` too. The function is marked `WARPKEP_HD`, which expands to host/device attributes under nvcc. FP32 and FP64 share the same source; the public CUDA launcher uses FP64.
 
-## CPU Lambert call path
+## CPU Lambert path
 
 ```text
 solve_lambert_cpu<double>(r1, r2, dt, mu, arc, options)
-  1. validate options
-  2. prepare_lambert_geometry        → r1, r2, c, s, q, lambda, T_target, local basis
-  3. solve_lambert_root              → x, y
-       ├─ bracket_lambert_root       → [lower, upper] with T(lower) >= T_target >= T(upper)
-       ├─ initial_lambert_guess      → starting point inside the bracket
-       └─ loop: evaluate_lambert_derivatives → Householder step, bisection fallback
-  4. reconstruct_lambert_velocities  → v1, v2
+  prepare_lambert_geometry(...)          -> triangle, local basis, lambda, q, T
+  solve_lambert_root(...)                -> x, y
+    bracket + starter
+    safeguarded Householder iteration, bisection fallback
+  reconstruct_lambert_velocities(...)    -> v1, v2
 ```
 
-Every stage returns a** **`LambertStatus`; the first failure stops the call and returns six NaN velocities. The computation finishes before returning. The test closes each solution with** **`propagate_kepler_cpu`, which gives a check independent of the Lambert formulas.
-
-## GPU Kepler call path
+The multi-revolution interface reuses the geometry and velocity reconstruction:
 
 ```text
-CPU (user program)                          GPU
-------------------                          ---
-allocate device arrays
-copy inputs (cudaMemcpyAsync, stream)
+solve_lambert_multi_rev_cpu<double>(..., M, options)
+  prepare_lambert_geometry(...)
+  solve_lambert_multi_rev_prepared(...)
+    M == 0 -> existing zero-revolution root path; one single slot
+    M > 0
+      find_lambert_minimum(...)          -> signed derivative bracket
+      classify time relative to minimum and threshold
+        below band -> no_solution
+        within band -> near_minimum
+        above band
+          solve_lambert_branch_root(left)
+          solve_lambert_branch_root(right)
+          reconstruct velocities for successful roots
+          verify separation; report counters and completeness
+```
+
+The minimum search applies Halley's method to the time derivative within a bracket. Each branch then uses Householder iteration, falling back to bisection when a step leaves the bracket. If one branch fails, the other can still return a usable solution. If the roots cannot be distinguished near the minimum, neither is returned. Storage is fixed-size, and the solver does not allocate memory or throw exceptions.
+
+Use `solve_lambert_multi_rev_prepared` in a CPU loop to reuse the geometry for different `M` values. Keep the same `mu` and arc. The [Lambert guide](lambert.md) shows how to read the results.
+
+## CUDA propagation path
+
+```text
+Caller / host                              Device
+allocate buffers and stream
+upload inputs
 launch_kepler_soa_double(..., stream)
-  ├─ n == 0 → return cudaSuccess
-  ├─ blocks = ceil(n / 256)
-  ├─ kernel<<<blocks, 256, 0, stream>>> ──▶ one thread per trajectory
-  └─ return cudaGetLastError()
-copy outputs back (stream)
-cudaStreamSynchronize(stream)
-check statuses
+  n == 0 -> cudaSuccess
+  compute ceil(n / 256) blocks
+  kernel<<<blocks, 256, 0, stream>>> ------> one thread per trajectory
+  return cudaGetLastError()                  gather state from SoA
+                                             propagate_kepler_cpu<double>
+                                             scatter state, status, iterations
+download results in stream
+synchronize and check completion
 ```
 
-The launcher runs on the host: it computes the grid and submits the kernel, without allocating, copying or waiting.** **`cudaSuccess` means submitted, not finished.
+Each GPU thread processes one trajectory independently. The host launcher submits the kernel without allocating, copying or waiting. Check execution errors when synchronizing the stream, even after the launch returns `cudaSuccess`.
 
-### Inside one thread
+## Python/CuPy path
 
 ```text
-kepler_propagation_soa_kernel<T>          (src/cuda/kepler.cu)
-  1. i >= n → return
-  2. gather   r[i], v[i] from 6 arrays → CartesianState
-  3. propagate_kepler_cpu(state, durations[i], mu)
-       └─ solve_universal_kepler
-            └─ stumpff
-  4. scatter  new r, v → 6 arrays
-     write    statuses[i], iterations[i]
+warpkep.propagate_kepler(...)
+  lazy import of cuda.py, CuPy and _cuda
+  select the input device
+  allocate outputs with CuPy
+  wait for the current CuPy stream
+  _cuda.propagate_kepler(...)
+    validate nanobind arrays and numerical batch parameters
+    allocate typed temporary status buffer
+    launch_kepler_soa_double(...)
+    copy typed statuses to the int32 output on device
+    wait for completion
+  return (out, statuses, iterations)
 ```
 
-The scalar propagator runs as an ordinary device function; no kernel launches another. Threads do not communicate, and a failed trajectory gets a failure status and NaN outputs without affecting the others.
+The binding releases the GIL during execution. CuPy owns the input and output arrays; the C++ adapter owns the temporary status buffer. The Python call includes allocations and waits for completion.
 
-## CMake targets
+## Build targets
 
+| Target | Built when | Purpose |
+| --- | --- | --- |
+| `warpkep` | Always | Static core library; propagates include paths and C++17 requirement |
+| `warpkep_smoke` | Always | Basic version/environment check |
+| `_core` | Python enabled | Version binding |
+| `warpkep_cuda` / `warpkep::cuda` | CUDA enabled | Compiled kernel, public core/runtime dependencies |
+| `warpkep_cuda_compile_smoke` | CUDA enabled | Device compilation of internal primitives |
+| `warpkep_gpu_smoke` | CUDA enabled | Plain C++ consumer of the CUDA library |
+| `warpkep_test_kepler_gpu` | CUDA enabled | Structured GPU validation; registered only with GPU tests enabled |
+| `_cuda` | Python and CUDA enabled | GPU nanobind extension |
+| `warpkep_test_*` CPU targets | Testing enabled | Seven registered CPU tests |
+| `warpkep_cpu_samples` | Testing enabled | Kepler reference JSON generator |
+| `warpkep_cpu_baseline` | Benchmarks enabled | Serial/parallel CPU timing |
+| `warpkep_kepler_benchmark` | Benchmarks and CUDA enabled | CPU/GPU timing with accuracy checks |
 
-| Target                                 | Kind                | Built when                 | Role                                                                       |
-| -------------------------------------- | ------------------- | -------------------------- | -------------------------------------------------------------------------- |
-| `warpkep`                              | C++ library         | Always                     | Core target: public and internal headers, including the CPU Lambert solver |
-| `warpkep_cuda` (alias `warpkep::cuda`) | Static CUDA library | `WARPKEP_ENABLE_CUDA=ON`   | Compiles`src/cuda/kepler.cu`; links `warpkep` and `CUDA::cudart` publicly  |
-| `warpkep_cuda_compile_smoke`           | Object library      | `WARPKEP_ENABLE_CUDA=ON`   | Device compilation check of the primitives; not linked into anything       |
-| `warpkep_gpu_smoke`                    | Executable          | `WARPKEP_ENABLE_CUDA=ON`   | Links only`warpkep::cuda`; compiled as plain C++                           |
-| CTest`kepler_gpu_smoke`                | Test, label`gpu`    | `WARPKEP_RUN_GPU_TESTS=ON` | Runs`warpkep_gpu_smoke`; needs a CUDA device                               |
-
-Because** **`warpkep_cuda` links its dependencies** **`PUBLIC`, a consumer only needs** **`target_link_libraries(my_app PRIVATE warpkep::cuda)` to get the headers, the compiled kernel and the CUDA runtime.
-
-With** **`WARPKEP_ENABLE_CUDA=OFF`, no CUDA target exists, and the CPU build, Lambert included, needs no CUDA toolkit.
-
-This page shows where each piece of the Kepler batch lives and how a call travels from the CPU to the GPU threads.
-
-## Files
-
-
-| File                                                                        | Contents                                                                              | Visibility                   |
-| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------- |
-| `include/warpkep/detail/config.hpp`                                         | `WARPKEP_HD` macro (`__host__ __device__` under nvcc)                                 | Internal                     |
-| `include/warpkep/detail/vector3.hpp`, `math.hpp`, `numeric_limits.hpp`      | Small vector type,`norm3`, limits for host and device                                 | Internal                     |
-| `include/warpkep/detail/stumpff.hpp`                                        | Stumpff functions C(z), S(z)                                                          | Internal                     |
-| `include/warpkep/detail/universal_kepler.hpp`, `solve_universal_kepler.hpp` | Universal Kepler equation and its iterative solver                                    | Internal                     |
-| `include/warpkep/detail/kepler_cpu.hpp`                                     | `CartesianState`, `KeplerPropagationResult`, scalar propagator `propagate_kepler_cpu` | Internal                     |
-| `include/warpkep/cartesian_soa.hpp`                                         | `CartesianSoAConstView`, `CartesianSoAView` (six pointers, no ownership)              | Public                       |
-| `include/warpkep/kepler_status.hpp`                                         | `KeplerPropagationStatus`, `propagation_status_name`                                  | Public                       |
-| `include/warpkep/cuda/kepler.hpp`                                           | Declaration of`launch_kepler_soa_double` and its contract                             | Public                       |
-| `src/cuda/kepler.cu`                                                        | Kernel`kepler_propagation_soa_kernel<T>` (file-local) and the launcher definition     | Compiled into`warpkep::cuda` |
-| `examples/cuda_smoke.cu`                                                    | Compile-only kernels covering the internal primitives on the device                   | Example                      |
-| `examples/kepler_gpu_smoke.cpp`                                             | Plain C++ program using the library on a 257-trajectory batch                         | Example / GPU test           |
-
-All scalar code in `detail/` is templated on `T` (float or double) and marked `WARPKEP_HD`, so the same source compiles for the CPU and the GPU. Only the FP64 launcher is public for now.
-
-## Call path
-
-```text
-CPU (user program)                          GPU
-------------------                          ---
-allocate device arrays
-copy inputs (cudaMemcpyAsync, stream)
-launch_kepler_soa_double(..., stream)
-  ├─ n == 0 → return cudaSuccess
-  ├─ blocks = ceil(n / 256)
-  ├─ kernel<<<blocks, 256, 0, stream>>> ──▶ one thread per trajectory
-  └─ return cudaGetLastError()
-copy outputs back (stream)
-cudaStreamSynchronize(stream)
-check statuses
-```
-
-The launcher runs on the host. It computes the grid and submits the kernel; it does not allocate, copy or wait. Returning `cudaSuccess` means the work was submitted, not finished.
-
-## Inside one thread
-
-Thread `i` handles trajectory `i` from start to end:
-
-```text
-kepler_propagation_soa_kernel<T>          (src/cuda/kepler.cu)
-  1. i >= n → return
-  2. gather  r[i], v[i] from 6 arrays → CartesianState
-  3. propagate_kepler_cpu(state, durations[i], mu)
-       └─ solve_universal_kepler
-            └─ stumpff
-  4. scatter  new r, v → 6 arrays
-     write    statuses[i], iterations[i]
-```
-
-The scalar propagator is called as an ordinary device function; no kernel calls another kernel. Threads do not communicate. A failed trajectory gets a failure status and NaN outputs without affecting the others.
-
-## CMake targets
-
-
-| Target                                 | Kind                | Built when                 | Role                                                                      |
-| -------------------------------------- | ------------------- | -------------------------- | ------------------------------------------------------------------------- |
-| `warpkep`                              | C++ library         | Always                     | Core target: public and internal headers                                  |
-| `warpkep_cuda` (alias `warpkep::cuda`) | Static CUDA library | `WARPKEP_ENABLE_CUDA=ON`   | Compiles`src/cuda/kepler.cu`; links `warpkep` and `CUDA::cudart` publicly |
-| `warpkep_cuda_compile_smoke`           | Object library      | `WARPKEP_ENABLE_CUDA=ON`   | Device compilation check of the primitives; not linked into anything      |
-| `warpkep_gpu_smoke`                    | Executable          | `WARPKEP_ENABLE_CUDA=ON`   | Links only`warpkep::cuda`; compiled as plain C++                          |
-| CTest`kepler_gpu_smoke`                | Test, label`gpu`    | `WARPKEP_RUN_GPU_TESTS=ON` | Runs`warpkep_gpu_smoke`; needs a CUDA device                              |
-
-Because `warpkep_cuda` links its dependencies `PUBLIC`, a consumer only writes `target_link_libraries(my_app PRIVATE warpkep::cuda)` to get the headers, the compiled kernel and the CUDA runtime.
-
-With `WARPKEP_ENABLE_CUDA=OFF`, none of the CUDA targets exist and the CPU build needs no CUDA toolkit.
+The documentation workflow compiles and runs `examples/lambert_multi_rev.cpp` directly, without CUDA.
