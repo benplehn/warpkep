@@ -13,7 +13,7 @@
 // Reference: D. Izzo, Revisiting Lambert's Problem, equations 17--23, section 4.2.1 (logarithmic starter) and algorithm 1 (velocities).
 // https://arxiv.org/abs/1403.2705 ; DOI 10.1007/s10569-014-9587-y
 // Bracketing, bisection fallback and residual-based success are our own choices.
-
+#include <warpkep/detail/config.hpp>
 #include <warpkep/lambert_status.hpp>
 #include <warpkep/detail/vector3.hpp>
 #include <warpkep/detail/numeric_limits.hpp>
@@ -72,7 +72,7 @@ namespace warpkep::detail {
 
     // Résultat d'échec : tous les champs flottants à NaN pour qu'aucune valeur ne soit exploitée par erreur
     template <typename T>
-    inline LambertGeometryResult<T> lambert_geometry_failure(LambertStatus status) {
+    WARPKEP_HD inline LambertGeometryResult<T> lambert_geometry_failure(LambertStatus status) {
         const T nan = NumericLimits<T>::quiet_NaN();
 
         LambertGeometryResult<T> result{};
@@ -91,7 +91,7 @@ namespace warpkep::detail {
     }
 
     template <typename T>
-    inline LambertGeometryResult<T> prepare_lambert_geometry(
+    WARPKEP_HD inline LambertGeometryResult<T> prepare_lambert_geometry(
         const Vector3<T>& departure, const Vector3<T>& arrival, T dt, T mu, LambertArc arc) {
         using Status = LambertStatus;
         const auto fail = [](Status status) { return lambert_geometry_failure<T>(status); };
@@ -237,7 +237,7 @@ namespace warpkep::detail {
     };
 
     template <typename T>
-    inline LambertTimeResult<T> evaluate_lambert_time(T x, T lambda, T q) {
+    WARPKEP_HD inline LambertTimeResult<T> evaluate_lambert_time(T x, T lambda, T q) {
         using Status = LambertStatus;
         const T nan = NumericLimits<T>::quiet_NaN();
         const auto fail = [nan](Status status) { return LambertTimeResult<T>{nan, nan, status}; };
@@ -375,7 +375,7 @@ namespace warpkep::detail {
     };
 
     template <typename T>
-    inline LambertGuessResult<T> initial_lambert_guess(T target_time, T lambda, T q) {
+    WARPKEP_HD inline LambertGuessResult<T> initial_lambert_guess(T target_time, T lambda, T q) {
         using Status = LambertStatus;
         const T nan = NumericLimits<T>::quiet_NaN();
         const auto fail = [nan](Status status) { return LambertGuessResult<T>{nan, status}; };
@@ -460,7 +460,7 @@ namespace warpkep::detail {
     };
 
     template <typename T>
-    inline LambertDerivativesResult<T> evaluate_lambert_derivatives(T x, T lambda, T q) {
+    WARPKEP_HD inline LambertDerivativesResult<T> evaluate_lambert_derivatives(T x, T lambda, T q) {
         using Status = LambertStatus;
         const T nan = NumericLimits<T>::quiet_NaN();
         const auto fail = [nan](Status status) {
@@ -605,7 +605,7 @@ namespace warpkep::detail {
     // lower == upper signifie que la racine tombe exactement sur un point échantillonné
     // Les évaluations d'expansion ne comptent pas comme itérations du solveur
     template <typename T>
-    inline LambertBracketResult<T> bracket_lambert_root(T target_time, T lambda, T q) {
+    WARPKEP_HD inline LambertBracketResult<T> bracket_lambert_root(T target_time, T lambda, T q) {
         using Status = LambertStatus;
         const T nan = NumericLimits<T>::quiet_NaN();
         const auto fail = [nan](Status status) { return LambertBracketResult<T>{nan, nan, status}; };
@@ -728,7 +728,7 @@ namespace warpkep::detail {
     // iterations compte les évaluations de la boucle de raffinement, hors encadrement,
     // vérification des bornes et termes de la série hypergéométrique
     template <typename T>
-    inline LambertRootResult<T> solve_lambert_root(T target_time, T lambda, T q, const LambertOptions& options = {}) {
+    WARPKEP_HD inline LambertRootResult<T> solve_lambert_root(T target_time, T lambda, T q, const LambertOptions& options = {}) {
         using Status = LambertStatus;
         const T nan = NumericLimits<T>::quiet_NaN();
         const auto fail = [nan](Status status, int iterations = 0) {
@@ -846,7 +846,7 @@ namespace warpkep::detail {
 
     // Résultat d'échec : six composantes de vitesse à NaN
     template <typename T>
-    inline LambertResult<T> lambert_failure(LambertStatus status, int iterations = 0) {
+    WARPKEP_HD inline LambertResult<T> lambert_failure(LambertStatus status, int iterations = 0) {
         const T nan = NumericLimits<T>::quiet_NaN();
         return {{nan, nan, nan}, {nan, nan, nan}, status, iterations};
     }
@@ -854,7 +854,7 @@ namespace warpkep::detail {
     // Préconditions : g vient d'une géométrie préparée avec succès, (x, y) d'une résolution réussie
     // pour cette même géométrie, et mu est le même que celui utilisé pour la préparer
     template <typename T>
-    inline LambertResult<T> reconstruct_lambert_velocities(
+    WARPKEP_HD inline LambertResult<T> reconstruct_lambert_velocities(
         const LambertGeometry<T>& g, T x, T y, T mu, int iterations = 0) {
         using Status = LambertStatus;
         const auto fail = [iterations](Status status) { return lambert_failure<T>(status, iterations); };
@@ -944,7 +944,7 @@ namespace warpkep::detail {
     // relative_tolerance finie dans ]0, 1[, max_iterations > 0
     // Tout échec renvoie six NaN ; pas de statut « pas de solution physique » pour M = 0
     template <typename T>
-    inline LambertResult<T> solve_lambert_cpu(
+    WARPKEP_HD inline LambertResult<T> solve_lambert_cpu(
         const Vector3<T>& departure, const Vector3<T>& arrival, T dt, T mu, LambertArc arc,
         const LambertOptions& options = {}) {
         static_assert(std::is_same_v<T, double>, "Lambert CPU supports FP64 only");

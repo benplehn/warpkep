@@ -1,5 +1,6 @@
 #pragma once
 
+#include <warpkep/detail/config.hpp>
 #include <warpkep/detail/lambert_cpu.hpp>
 
 // Lambert CPU FP64, M >= 0, sans allocation ni exception
@@ -53,7 +54,7 @@ struct LambertMultiRevResult {
 
 namespace lambert_multi_detail {
 
-inline bool valid_options(const LambertMultiRevOptions& options) {
+WARPKEP_HD inline bool valid_options(const LambertMultiRevOptions& options) {
     return options.roots.max_iterations > 0
         && std::isfinite(options.roots.relative_tolerance)
         && options.roots.relative_tolerance > 0.0
@@ -67,19 +68,19 @@ inline bool valid_options(const LambertMultiRevOptions& options) {
 }
 
 template <typename T>
-inline LambertMinimumResult<T> minimum_failure(LambertStatus status, int iterations = 0) {
+WARPKEP_HD inline LambertMinimumResult<T> minimum_failure(LambertStatus status, int iterations = 0) {
     const T nan = NumericLimits<T>::quiet_NaN();
     return {nan, nan, nan, nan, nan, nan, status, iterations, false};
 }
 
 template <typename T>
-inline LambertRootResult<T> root_failure(LambertStatus status, int iterations = 0) {
+WARPKEP_HD inline LambertRootResult<T> root_failure(LambertStatus status, int iterations = 0) {
     const T nan = NumericLimits<T>::quiet_NaN();
     return {nan, nan, nan, status, iterations};
 }
 
 template <typename T>
-inline LambertMultiRevResult<T> request_failure(
+WARPKEP_HD inline LambertMultiRevResult<T> request_failure(
     int revolutions, LambertArc arc, LambertStatus status
 ) {
     const T nan = NumericLimits<T>::quiet_NaN();
@@ -91,16 +92,14 @@ inline LambertMultiRevResult<T> request_failure(
     out.minimum = minimum_failure<T>(LambertStatus::unsupported_case);
     out.threshold = nan;
     for (int i = 0; i < 2; ++i) {
-        const auto branch = revolutions == 0 ? LambertBranch::single
-            : (i == 0 ? LambertBranch::left : LambertBranch::right);
-        out.solutions[i] = {revolutions, arc, branch, nan, lambert_failure<T>(status)};
+    out.solutions[i] = {revolutions, arc, revolutions == 0 ? LambertBranch::single : (i == 0 ? LambertBranch::left : LambertBranch::right), nan, lambert_failure<T>(status)};
     }
     return out;
 }
 
 // M*pi/u^(3/2), sans pow ; la géométrie scalaire doit être cohérente.
 template <typename T>
-inline T revolution_time(T x, int revolutions) {
+WARPKEP_HD inline T revolution_time(T x, int revolutions) {
     const T u = (T{1} - x) * (T{1} + x);
     return (static_cast<T>(revolutions) * std::acos(T{-1}) / u) / std::sqrt(u);
 }
@@ -110,7 +109,7 @@ inline T revolution_time(T x, int revolutions) {
 // Surcharge sans valeur par défaut : aucun changement des appels lambert mono
 // lambda et q doivent provenir de la même préparation géométrique
 template <typename T>
-inline LambertTimeResult<T> evaluate_lambert_time(T x, T lambda, T q, int revolutions) {
+WARPKEP_HD inline LambertTimeResult<T> evaluate_lambert_time(T x, T lambda, T q, int revolutions) {
     const T nan = NumericLimits<T>::quiet_NaN();
     if (revolutions < 0 || (revolutions > 0 && (!std::isfinite(x) || x <= T{-1} || x >= T{1}))) {
         return {nan, nan, LambertStatus::invalid_input};
@@ -128,7 +127,7 @@ inline LambertTimeResult<T> evaluate_lambert_time(T x, T lambda, T q, int revolu
 }
 
 template <typename T>
-inline LambertDerivativesResult<T> evaluate_lambert_derivatives(
+WARPKEP_HD inline LambertDerivativesResult<T> evaluate_lambert_derivatives(
     T x, T lambda, T q, int revolutions
 ) {
     const T nan = NumericLimits<T>::quiet_NaN();
@@ -151,8 +150,7 @@ inline LambertDerivativesResult<T> evaluate_lambert_derivatives(
     const T third = base.third + T{15} * x * (T{3} + T{4} * x2) * (extra / u / u / u);
     const T time = base.time + extra;
 
-    if (!std::isfinite(extra) || extra <= T{0} || !std::isfinite(time)
-        || !std::isfinite(first) || !std::isfinite(second) || !std::isfinite(third)) {
+    if (!std::isfinite(extra) || extra <= T{0} || !std::isfinite(time) || !std::isfinite(first) || !std::isfinite(second) || !std::isfinite(third)) {
         return fail(LambertStatus::numerical_failure);
     }
     // Ici, first peut être négatif, nul OU positif.
@@ -162,31 +160,27 @@ inline LambertDerivativesResult<T> evaluate_lambert_derivatives(
 namespace lambert_multi_detail {
 
 template <typename T>
-inline LambertMinimumResult<T> finish_minimum(
-    T lambda, T q, int revolutions, T lower, T upper,
-    int iterations, bool precision_limited
+WARPKEP_HD inline LambertMinimumResult<T> finish_minimum(
+    T lambda, T q, int revolutions, T lower, T upper, int iterations, bool precision_limited
 ) {
     const T x = lower + (upper - lower) / T{2};
     const auto a = evaluate_lambert_derivatives(lower, lambda, q, revolutions);
     const auto b = evaluate_lambert_derivatives(upper, lambda, q, revolutions);
     const auto center = evaluate_lambert_derivatives(x, lambda, q, revolutions);
-    if (a.status != LambertStatus::success || b.status != LambertStatus::success
-        || center.status != LambertStatus::success || a.first > T{0} || b.first < T{0}
-        || center.second <= T{0}) {
+    if (a.status != LambertStatus::success || b.status != LambertStatus::success || center.status != LambertStatus::success || a.first > T{0} || b.first < T{0} || center.second <= T{0}) {
         return minimum_failure<T>(LambertStatus::numerical_failure, iterations);
     }
     const T gradient = std::abs(a.first) > std::abs(b.first) ? std::abs(a.first) : std::abs(b.first);
     const T endpoint_spread = std::abs(a.time - center.time) > std::abs(b.time - center.time)
         ? std::abs(a.time - center.time) : std::abs(b.time - center.time);
-    // Diagnostic conservateur dans nos cas, sans prétention de borne rigoureuse
+   
+        // Diagnostic conservateur dans nos cas, sans prétention de borne rigoureuse
     // pour toute géométrie. La classification ajoute encore sa propre marge
-    const T uncertainty = endpoint_spread + gradient * (upper - lower)
-        + T{64} * NumericLimits<T>::epsilon() * center.time;
+    const T uncertainty = endpoint_spread + gradient * (upper - lower) + T{64} * NumericLimits<T>::epsilon() * center.time;
     if (!std::isfinite(uncertainty)) {
         return minimum_failure<T>(LambertStatus::numerical_failure, iterations);
     }
-    return {x, center.time, lower, upper, center.second, uncertainty,
-            LambertStatus::success, iterations, precision_limited};
+    return {x, center.time, lower, upper, center.second, uncertainty, LambertStatus::success, iterations, precision_limited};
 }
 
 } // namespace lambert_multi_detail
@@ -196,8 +190,7 @@ inline LambertMinimumResult<T> finish_minimum(
 // adjacents (precision_limited=true). Le seul petit pas de Halley ne suffit pas
 // iterations compte les raffinements, hors expansion et sondages des bornes
 template <typename T>
-inline LambertMinimumResult<T> find_lambert_minimum(
-    T lambda, T q, int revolutions, const LambertMultiRevOptions& options = {}
+WARPKEP_HD inline LambertMinimumResult<T> find_lambert_minimum( T lambda, T q, int revolutions, const LambertMultiRevOptions& options = {}
 ) {
     using Status = LambertStatus;
     namespace md = lambert_multi_detail;
@@ -254,9 +247,7 @@ inline LambertMinimumResult<T> find_lambert_minimum(
             if (a < b && a <= x && x <= b) {
                 const auto left = evaluate_lambert_derivatives(a, lambda, q, revolutions);
                 const auto right = evaluate_lambert_derivatives(b, lambda, q, revolutions);
-                if (left.status == Status::success && right.status == Status::success
-                    && left.first <= T{0} && right.first >= T{0}
-                    && b - a <= tolerance) {
+                if (left.status == Status::success && right.status == Status::success && left.first <= T{0} && right.first >= T{0} && b - a <= tolerance) {
                     return md::finish_minimum(lambda, q, revolutions, a, b, iteration, false);
                 }
             }
@@ -299,7 +290,7 @@ inline LambertMinimumResult<T> find_lambert_minimum(
 namespace lambert_multi_detail {
 
 template <typename T>
-inline LambertBracketResult<T> branch_bracket(
+WARPKEP_HD inline LambertBracketResult<T> branch_bracket(
     T target, T lambda, T q, int revolutions, LambertBranch branch,
     const LambertMinimumResult<T>& minimum
 ) {
@@ -318,9 +309,7 @@ inline LambertBracketResult<T> branch_bracket(
         const auto evaluation = evaluate_lambert_time(outer, lambda, q, revolutions);
         if (evaluation.status != LambertStatus::success) { return fail(evaluation.status); }
         if (evaluation.time >= target) {
-            return branch == LambertBranch::left
-                ? LambertBracketResult<T>{outer, inner, LambertStatus::success}
-                : LambertBracketResult<T>{inner, outer, LambertStatus::success};
+            return branch == LambertBranch::left ? LambertBracketResult<T>{outer, inner, LambertStatus::success} : LambertBracketResult<T>{inner, outer, LambertStatus::success};
         }
         inner = outer;
         T next;
@@ -339,15 +328,13 @@ inline LambertBracketResult<T> branch_bracket(
 }
 
 template <typename T>
-inline T branch_starter(T target, int revolutions, LambertBranch branch) {
+WARPKEP_HD inline T branch_starter(T target, int revolutions, LambertBranch branch) {
     // Équation 31 d'Izzo, via tanh(log(ratio)/3) pour éviter les rapports
     // extrêmes et les puissances. Le starter ne décide jamais de l'existence
     const T m = static_cast<T>(revolutions);
     const T log_pi = std::log(std::acos(T{-1}));
     const T log_eight = std::log(T{8});
-    const T logarithm = branch == LambertBranch::left
-        ? std::log(m + T{1}) + log_pi - log_eight - std::log(target)
-        : log_eight + std::log(target) - std::log(m) - log_pi;
+    const T logarithm = branch == LambertBranch::left ? std::log(m + T{1}) + log_pi - log_eight - std::log(target) : log_eight + std::log(target) - std::log(m) - log_pi;
     return std::tanh(logarithm / T{3});
 }
 
@@ -356,16 +343,14 @@ inline T branch_starter(T target, int revolutions, LambertBranch branch) {
 // Racine d'une branche déjà classée au-dessus du seuil. Le minimum et ses
 // bornes doivent provenir de la même géométrie et du même M
 template <typename T>
-inline LambertRootResult<T> solve_lambert_branch_root(
+WARPKEP_HD inline LambertRootResult<T> solve_lambert_branch_root(
     T target, T lambda, T q, int revolutions, LambertBranch branch,
     const LambertMinimumResult<T>& minimum, const LambertOptions& options = {}
 ) {
     using Status = LambertStatus;
     namespace md = lambert_multi_detail;
-    if (revolutions <= 0 || (branch != LambertBranch::left && branch != LambertBranch::right)
-        || minimum.status != Status::success || !std::isfinite(target) || target <= T{0}
-        || !std::isfinite(options.relative_tolerance) || options.relative_tolerance <= 0.0
-        || options.relative_tolerance >= 1.0 || options.max_iterations <= 0) {
+    if (revolutions <= 0 || (branch != LambertBranch::left && branch != LambertBranch::right) || minimum.status != Status::success || !std::isfinite(target) || target <= T{0}
+        || !std::isfinite(options.relative_tolerance) || options.relative_tolerance <= 0.0 || options.relative_tolerance >= 1.0 || options.max_iterations <= 0) {
         return md::root_failure<T>(Status::invalid_input);
     }
     const auto bracket = md::branch_bracket(target, lambda, q, revolutions, branch, minimum);
@@ -374,8 +359,7 @@ inline LambertRootResult<T> solve_lambert_branch_root(
     T upper = bracket.upper;
     const T tolerance = static_cast<T>(options.relative_tolerance);
     const auto accepted = [target, tolerance, branch, &minimum](T x, T time) {
-        const bool correct_side = branch == LambertBranch::left
-            ? x < minimum.lower : x > minimum.upper;
+        const bool correct_side = branch == LambertBranch::left ? x < minimum.lower : x > minimum.upper;
         return correct_side && std::abs(time - target) / target <= tolerance;
     };
 
@@ -415,15 +399,13 @@ inline LambertRootResult<T> solve_lambert_branch_root(
         else { upper = x; }
 
         T candidate = NumericLimits<T>::quiet_NaN();
-        const bool derivative_sign = derivatives.status == Status::success
-            && (branch == LambertBranch::left ? derivatives.first < T{0} : derivatives.first > T{0});
+        const bool derivative_sign = derivatives.status == Status::success && (branch == LambertBranch::left ? derivatives.first < T{0} : derivatives.first > T{0});
         if (derivative_sign) {
             const T h = (time - target) / derivatives.first;
             const T a = h * (derivatives.second / derivatives.first);
             const T b = h * (h * (derivatives.third / derivatives.first));
             const T denominator = T{1} - a + b / T{6};
-            if (std::isfinite(h) && std::isfinite(a) && std::isfinite(b)
-                && std::isfinite(denominator) && denominator != T{0}) {
+            if (std::isfinite(h) && std::isfinite(a) && std::isfinite(b) && std::isfinite(denominator) && denominator != T{0}) {
                 candidate = x - h * ((T{1} - a / T{2}) / denominator);
             }
         }
@@ -441,7 +423,7 @@ inline LambertRootResult<T> solve_lambert_branch_root(
 // Variante préparée : permet à une boucle hôte sur M de réutiliser la géométrie
 // Précondition : g provient d'une préparation réussie, avec les mêmes mu et arc
 template <typename T>
-inline LambertMultiRevResult<T> solve_lambert_multi_rev_prepared(
+WARPKEP_HD inline LambertMultiRevResult<T> solve_lambert_multi_rev_prepared(
     const LambertGeometry<T>& g, T mu, LambertArc arc, int revolutions,
     const LambertMultiRevOptions& options = {}
 ) {
@@ -459,9 +441,7 @@ inline LambertMultiRevResult<T> solve_lambert_multi_rev_prepared(
         }
         return out;
     };
-    if (revolutions < 0 || !md::valid_options(options)
-        || !std::isfinite(mu) || mu <= T{0}
-        || (arc != LambertArc::short_arc && arc != LambertArc::long_arc)) {
+    if (revolutions < 0 || !md::valid_options(options) || !std::isfinite(mu) || mu <= T{0} || (arc != LambertArc::short_arc && arc != LambertArc::long_arc)) {
         return fail(Status::invalid_input);
     }
 
@@ -519,31 +499,27 @@ inline LambertMultiRevResult<T> solve_lambert_multi_rev_prepared(
     }
 
     // Une multiplicité non résolue ne fournit aucune vitesse exploitable
-    if (out.solutions[0].result.status == Status::near_minimum
-        || out.solutions[1].result.status == Status::near_minimum) {
+    if (out.solutions[0].result.status == Status::near_minimum || out.solutions[1].result.status == Status::near_minimum) {
         return fail(Status::near_minimum);
     }
     out.complete = out.solution_count == 2;
     if (out.complete) {
         // Vérification explicite de la séparation des deux branches.
-        if (!(out.solutions[0].x < out.minimum.lower
-              && out.solutions[1].x > out.minimum.upper)) {
+        if (!(out.solutions[0].x < out.minimum.lower && out.solutions[1].x > out.minimum.upper)) {
             return fail(Status::near_minimum);
         }
         out.status = Status::success;
     } else {
         // Un succès partiel reste exploitable par son statut individuel
         // Ne jamais parcourir seulement [0, solution_count) : utiliser slot_count
-        out.status = out.solutions[0].result.status != Status::success
-            ? out.solutions[0].result.status : out.solutions[1].result.status;
+        out.status = out.solutions[0].result.status != Status::success ? out.solutions[0].result.status : out.solutions[1].result.status;
     }
     return out;
 }
 
-// Point d'entrée CPU complet. Préparation UNE fois, minimum UNE fois pour les
-// deux branches. En cas d'échec, les vitesses du slot concerné sont NaN
+// Point d'entrée CPU complet. Préparation UNE fois, minimum UNE fois pour les deux branches. En cas d'échec, les vitesses du slot concerné sont NaN
 template <typename T>
-inline LambertMultiRevResult<T> solve_lambert_multi_rev_cpu(
+WARPKEP_HD inline LambertMultiRevResult<T> solve_lambert_multi_rev_cpu(
     const Vector3<T>& departure, const Vector3<T>& arrival, T dt, T mu,
     LambertArc arc, int revolutions, const LambertMultiRevOptions& options = {}
 ) {

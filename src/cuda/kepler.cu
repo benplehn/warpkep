@@ -95,7 +95,7 @@ cudaError_t launch_kepler_soa_double(
     const std::size_t block_count = n / threads_per_block + (n % threads_per_block != 0);
 
     // 3. CUDA expects an unsigned int: check before converting.
-    if (block_count > std::numeric_limits<unsigned int>::max()) {
+    if (block_count > std::numeric_limits<int>::max()) {
         return cudaErrorInvalidConfiguration;
     }
     const auto blocks = static_cast<unsigned int>(block_count);

@@ -1,5 +1,6 @@
 #include <cuda_runtime.h>
 
+#include <warpkep/detail/lambert_multi_rev_cpu.hpp>
 #include <warpkep/detail/kepler_cpu.hpp>
 #include <warpkep/detail/solve_universal_kepler.hpp>
 #include <warpkep/detail/stumpff.hpp>
@@ -75,4 +76,28 @@ __global__ void kepler_propagation_double_kernel(
         results[i] = warpkep::detail::propagate_kepler_cpu(
             initial_states[i], durations[i], mu);
     }
+}
+
+__global__ void lambert_multi_rev_compile_kernel(
+    const warpkep::detail::Vector3<double>* departures,
+    const warpkep::detail::Vector3<double>* arrivals,
+    const double* durations,
+    double mu,
+    int revolutions,
+    warpkep::detail::LambertMultiRevResult<double>* results,
+    std::size_t n
+) {
+    const std::size_t i = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= n) {
+        return;
+    }
+
+    results[i] = warpkep::detail::solve_lambert_multi_rev_cpu(
+        departures[i],
+        arrivals[i],
+        durations[i],
+        mu,
+        warpkep::detail::LambertArc::short_arc,
+        revolutions);
+
 }

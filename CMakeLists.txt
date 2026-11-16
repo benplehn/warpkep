@@ -52,6 +52,7 @@ if(WARPKEP_ENABLE_CUDA)
 
     add_library(warpkep_cuda STATIC
         src/cuda/kepler.cu
+        src/cuda/lambert.cu
     )
 
     add_library(warpkep::cuda ALIAS warpkep_cuda)
@@ -106,6 +107,18 @@ if(WARPKEP_ENABLE_CUDA)
     )
 
     target_link_libraries(warpkep_test_kepler_gpu PRIVATE
+        warpkep::cuda
+    )
+    # GPU validation of the multi-revolution Lambert solver
+    add_executable(warpkep_test_lambert_gpu
+        tests/test_lambert_gpu.cpp
+    )
+
+    target_include_directories(warpkep_test_lambert_gpu PRIVATE
+        validation
+    )
+
+    target_link_libraries(warpkep_test_lambert_gpu PRIVATE
         warpkep::cuda
     )
 endif()
@@ -214,9 +227,15 @@ if(WARPKEP_RUN_GPU_TESTS)
         COMMAND warpkep_test_kepler_gpu
     )
 
-    set_tests_properties(kepler_gpu_smoke kepler_gpu_validation PROPERTIES
+    add_test(
+        NAME lambert_gpu_validation
+        COMMAND warpkep_test_lambert_gpu
+    )
+
+    set_tests_properties(kepler_gpu_smoke kepler_gpu_validation lambert_gpu_validation PROPERTIES
         LABELS "gpu"
     )
+
 endif()
 
 

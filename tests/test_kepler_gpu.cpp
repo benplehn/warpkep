@@ -14,7 +14,7 @@
 
 #include <warpkep/cuda/kepler.hpp>
 #include <warpkep/detail/kepler_cpu.hpp>
-
+#include "cuda_test_utils.hpp"
 #include <cuda_runtime.h>
 
 #include <cmath>
@@ -30,8 +30,13 @@
 #include <string>
 #include <vector>
 
+
 namespace wd = warpkep::detail;
 
+
+using warpkep::test::cuda_check;
+using warpkep::test::CudaStream;
+using warpkep::test::DeviceArray;
 using State = wd::CartesianState<double>;
 using Vec3 = wd::Vector3<double>;
 using Status = warpkep::KeplerPropagationStatus;
@@ -40,60 +45,16 @@ using Status = warpkep::KeplerPropagationStatus;
 constexpr double invariant_tolerance = 1e-11;
 constexpr double round_trip_tolerance = 1e-11;
 
-// ---------------------------------------------------------------------------
-// CUDA helpers (same mechanisms as examples/kepler_gpu_smoke.cpp)
-// ---------------------------------------------------------------------------
 
-// Owns one GPU array and frees it when it goes out of scope.
-template <typename T>
-struct DeviceArray {
-    T* ptr = nullptr;
-    cudaError_t error = cudaSuccess;
-
-    explicit DeviceArray(std::size_t count) {
-        error = cudaMalloc(&ptr, count * sizeof(T));
-    }
-    ~DeviceArray() {
-        cudaFree(ptr);  // cudaFree(nullptr) is a no-op
-    }
-
-    DeviceArray(const DeviceArray&) = delete;
-    DeviceArray& operator=(const DeviceArray&) = delete;
-};
-
-// Owns one non-blocking CUDA stream.
-struct CudaStream {
-    cudaStream_t handle = nullptr;
-    cudaError_t error = cudaSuccess;
-
-    CudaStream() {
-        error = cudaStreamCreateWithFlags(&handle, cudaStreamNonBlocking);
-    }
-    ~CudaStream() {
-        if (handle != nullptr) {
-            cudaStreamDestroy(handle);
-        }
-    }
-
-    CudaStream(const CudaStream&) = delete;
-    CudaStream& operator=(const CudaStream&) = delete;
-};
-
-// A CUDA error is not a numerical result: it aborts the whole test.
-void require(cudaError_t error, const char* what) {
-    if (error != cudaSuccess) {
-        throw std::runtime_error(std::string(what) + " failed: " + cudaGetErrorString(error));
-    }
-}
 
 template <typename T>
 void upload(DeviceArray<T>& dst, const std::vector<T>& src, cudaStream_t stream) {
-    require(cudaMemcpyAsync(dst.ptr, src.data(), src.size() * sizeof(T), cudaMemcpyHostToDevice, stream), "cudaMemcpyAsync (host to device)");
+    cuda_check(cudaMemcpyAsync(dst.ptr, src.data(), src.size() * sizeof(T), cudaMemcpyHostToDevice, stream), "cudaMemcpyAsync (host to device)");
 }
 
 template <typename T>
 void download(std::vector<T>& dst, const DeviceArray<T>& src, cudaStream_t stream) {
-    require(cudaMemcpyAsync(dst.data(), src.ptr, dst.size() * sizeof(T), cudaMemcpyDeviceToHost, stream), "cudaMemcpyAsync (device to host)");
+    cuda_check(cudaMemcpyAsync(dst.data(), src.ptr, dst.size() * sizeof(T), cudaMemcpyDeviceToHost, stream), "cudaMemcpyAsync (device to host)");
 }
 
 // ---------------------------------------------------------------------------
@@ -219,13 +180,6 @@ BatchResult run_batch(const std::vector<State>& initial, const std::vector<doubl
     DeviceArray<Status> d_status(n);    // one status per trajectory
     DeviceArray<int> d_iter(n);         // one iteration count per trajectory
 
-    // Allocation can fail (no GPU, not enough memory): stop with a clear message.
-    require(d_in.error, "cudaMalloc (input states)");
-    require(d_out.error, "cudaMalloc (output states)");
-    require(d_dt.error, "cudaMalloc (durations)");
-    require(d_status.error, "cudaMalloc (statuses)");
-    require(d_iter.error, "cudaMalloc (iterations)");
-
     // --- 2. Prepare CPU memory to receive the results ---
     // Plain CPU vectors, sized to hold exactly what comes back. They are
     // allocated before the first copy so that the cleanup below can wait for
@@ -274,7 +228,7 @@ BatchResult run_batch(const std::vector<State>& initial, const std::vector<doubl
         // cudaSuccess means "kernel queued", not "computation finished".
         // We pass GPU addresses only: the kernel will read input/d_dt and write
         // output/d_status/d_iter directly in GPU memory.
-        require(warpkep::launch_kepler_soa_double(input, d_dt.ptr, mu, output, d_status.ptr, d_iter.ptr, n, stream), "launch_kepler_soa_double");
+        cuda_check(warpkep::launch_kepler_soa_double(input, d_dt.ptr, mu, output, d_status.ptr, d_iter.ptr, n, stream), "launch_kepler_soa_double");
 
         // --- 6. Queue the copies GPU -> CPU ---
         // Queued after the kernel in the same stream, so the GPU runs them only
@@ -290,7 +244,7 @@ BatchResult run_batch(const std::vector<State>& initial, const std::vector<doubl
         // It also reports errors that happened during execution on the GPU
         // (e.g. invalid memory access), which the launch call could not see.
         // Only after this line may we read host_out, statuses and iterations.
-        require(cudaStreamSynchronize(stream), "cudaStreamSynchronize");
+        cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize");
     } catch (...) {
         // Wait before the local buffers are destroyed.
         const auto cleanup_error = cudaStreamSynchronize(stream);
@@ -429,7 +383,7 @@ void check_batch_sizes(const std::vector<KeplerValidationCase>& cases, const std
 void check_empty_batch(cudaStream_t stream, Report& report) {
     std::cout << "Empty batch\n";
     const cudaError_t error = warpkep::launch_kepler_soa_double({}, nullptr, 1.0, {}, nullptr, nullptr, 0, stream);
-    require(cudaStreamSynchronize(stream), "cudaStreamSynchronize");
+    cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize");
 
     if (error != cudaSuccess) {
         report.fail(std::string("n=0 returned ") + cudaGetErrorString(error));
@@ -695,7 +649,6 @@ int main(int argc, char** argv) {
 
     try {
         CudaStream stream;
-        require(stream.error, "cudaStreamCreateWithFlags");
 
         const auto cases = kepler_validation_cases();
         Report report;
