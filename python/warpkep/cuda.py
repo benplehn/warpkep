@@ -7,8 +7,7 @@ def propagate_kepler(states, durations, *, mu=1.0):
 
     Entrées : states (6, N), durations (N,), float64, contigus en ordre C.
     Unités cohérentes : positions en L, durées en T, mu en L³/T².
-    Préparer les entrées sur le stream courant du GPU de states ;
-    sinon, attendre leurs streams producteurs avant cet appel.
+    Préparer les entrées sur le stream courant du GPU de states sinon, attendre leurs streams producteurs avant cet appel.
     Les sorties sont prêtes au retour.
     """
 
