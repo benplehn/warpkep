@@ -167,11 +167,9 @@ void benchmark(std::size_t n) {
 
 int main() {
     try {
-        benchmark(256);
-        benchmark(65'536);
-        benchmark(262'144);
-        benchmark(524'288);
-        benchmark(1'048'576);
+        benchmark(524'288);    // A : référence, avant
+        benchmark(1'048'576);  // B : la taille suspecte
+        benchmark(524'288);    // A : même mesure, après
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
