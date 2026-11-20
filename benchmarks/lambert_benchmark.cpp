@@ -169,6 +169,7 @@ int main() {
     try {
         benchmark(256);
         benchmark(65'536);
+        benchmark(1'048'576);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
