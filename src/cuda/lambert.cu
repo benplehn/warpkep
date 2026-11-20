@@ -88,7 +88,6 @@ cudaError_t launch_lambert_multi_rev_soa_double(
     cudaStream_t stream
 ) {
     // 1. Empty batch: no pointer accessed, no work submitted
-
     if (n == 0) {
         return cudaSuccess;
     }

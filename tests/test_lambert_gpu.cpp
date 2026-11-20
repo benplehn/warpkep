@@ -71,10 +71,12 @@ Case circular_case(std::size_t i, int m, Arc arc, double mu) {
 void run_batch(const std::vector<Case>& cases, double mu, Arc arc, int m, wd::LambertMultiRevOptions options = {}) {
     const std::size_t n = cases.size();
     check(n > 0, "run_batch requires a nonempty fixture");
+    
     // Packed SoA storage: 7 input arrays, then 7 output arrays per slot
     // (departure velocity xyz, arrival velocity xyz, x). No arrays overlap.
     std::vector<double> values(21 * n, -12345.0);
     std::vector<Status> statuses(3 * n, Status::numerical_failure);
+    
     // Global slot_count, solution_count, complete; then iterations per slot.
     std::vector<int> integers(5 * n, -12345);
     std::vector<wd::LambertMultiRevResult<double>> reference;

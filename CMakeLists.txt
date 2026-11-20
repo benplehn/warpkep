@@ -148,15 +148,13 @@ if(WARPKEP_BUILD_BENCHMARKS)
     # CPU/GPU benchmark: plain C++ consumer of the CUDA library.
     # Only when the CUDA library is built.
     if(WARPKEP_ENABLE_CUDA)
-        add_executable(warpkep_kepler_benchmark
-            benchmarks/kepler_benchmark.cpp
-        )
+        add_executable(warpkep_kepler_benchmark benchmarks/kepler_benchmark.cpp)
+        add_executable(warpkep_lambert_benchmark benchmarks/lambert_benchmark.cpp)
 
-        target_link_libraries(warpkep_kepler_benchmark PRIVATE
-            warpkep::cuda
-            Threads::Threads
-        )
-
+        target_link_libraries(warpkep_lambert_benchmark PRIVATE warpkep::cuda)
+        target_link_libraries(warpkep_kepler_benchmark PRIVATE warpkep::cuda Threads::Threads)
+        target_include_directories(warpkep_lambert_benchmark PRIVATE tests)
+        
         # Source commit for the benchmark metadata, read at configure time.
         execute_process(
             COMMAND git describe --always --dirty
