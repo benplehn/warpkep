@@ -116,6 +116,7 @@ void require_disjoint(const std::array<MemoryRange, Count>& ranges) {
 // Le paramètre mu est commun au lot et les unités doivent être cohérentes.
 // Les descripteurs ndarray conservent une référence aux buffers CuPy pendant l’appel.
 void propagate_kepler_cuda(StatesIn states, DurationsIn durations, StatesOut out, IntArray statuses, IntArray iterations, double mu, std::uintptr_t stream_ptr) {
+    
     // Compare la taille libre N entre les tableaux à partir de leurs métadonnées.
     const std::size_t n = states.shape(1);
     if (durations.shape(0) != n || out.shape(1) != n) {

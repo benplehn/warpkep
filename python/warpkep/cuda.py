@@ -41,3 +41,82 @@ def propagate_kepler(states, durations, *, mu=1.0):
 
         # Renvoyer les tableaux CuPy directement, sans transfert vers la RAM.
         return out, statuses, iterations
+
+
+
+
+def solve_lambert(departures, arrivals, durations, *, mu=1.0, revolutions=0, long_arc=False) :
+    """Solve N Lambert transfers on CUDA.
+
+    Inputs are C-contiguous float64 CuPy arrays on the same GPU.
+    Positions have shape (3, N) and positive flight times have shape (N,).
+
+    Returns:
+        Nine CuPy arrays, ready on return, in this order:
+        departure_velocities, arrival_velocities, roots, branch_statuses, iterations, statuses, slot_count, solution_count, complete.
+        Velocities are (2, 3, N), per-slot outputs are (2, N), and per-transfer outputs are (N,). Velocities and roots are float64.
+        All other outputs are int32.
+
+    Only slot 0 is active for zero revolutions
+    """
+
+    # Exiger des tableaux GPU 
+    if not isinstance(departures, cp.ndarray):
+        raise TypeError(f"departures doit être un tableau cupy, recu: {type(departures).__name__}. Utilise cp.asarray(departures) pour le placer sur le GPU.")
+
+    if not isinstance(arrivals, cp.ndarray):
+        raise TypeError(f"arrivals doit être un tableau cupy, recu: {type(arrivals).__name__}. Utilise cp.asarray(arrivals) pour le placer sur le GPU.")
+
+    if not isinstance(durations, cp.ndarray):
+        raise TypeError(f"durations doit être un tableau cupy, recu: {type(durations).__name__}. Utilise cp.asarray(durations) pour le placer sur le GPU.")
+
+
+     # Vérifier les dimensions
+    if departures.ndim != 2 or departures.shape[0] != 3:
+        raise ValueError(f"departures doit avoir la forme (3,N), lignes (rx, ry, rz), recu:: {departures.shape}")
+
+    
+    if arrivals.ndim != 2 or arrivals.shape[0] != 3:
+        raise ValueError(f"arrivals doit avoir la forme (3,N), lignes (rx, ry, rz), recu:: {arrivals.shape}")
+
+    if arrivals.shape[1] != departures.shape[1]:
+        raise ValueError(f"arrivals et departures one besoin d´avoir le même nombre d'arcs lambert à calculer, recu: departures = {departures.shape[1]}, arrivals = {arrivals.shape[1]}")
+
+    # Taille du batch
+    n = departures.shape[1]
+
+    # Verifications des durées
+    if durations.ndim != 1 or durations.shape[0] != n:
+        raise ValueError(f"durations doit avoir la forme {(n,)}, reçu {durations.shape}.")
+
+    # Allouer sur le GPU les sorties
+    with departures.device:
+        departure_velocities = cp.empty((2,3,n), dtype=cp.float64)
+        arrival_velocities = cp.empty((2,3,n), dtype = cp.float64)
+        roots = cp.empty((2,n), dtype = cp.float64)
+        branch_statuses = cp.empty((2,n), dtype = cp.int32)
+        iterations = cp.empty((2,n), dtype = cp.int32)
+        statuses = cp.empty((n,), dtype = cp.int32)
+        slot_count = cp.empty((n,), dtype = cp.int32)
+        solution_count = cp.empty((n,), dtype = cp.int32)
+        complete = cp.empty((n,), dtype = cp.int32)
+
+
+        # On recupere le stream cupy
+        stream = cp.cuda.get_current_stream()
+
+        # On synchronise avant de lancer les appels GPU (pour que les entrées soient prêtes avant leur import par nanobind)
+        stream.synchronize()
+        stream_ptr = stream.ptr
+
+        # Le binding vérifie les autres contraintes, lance le kernel et attend sa fin
+        _cuda.solve_lambert(departures, arrivals, durations, departure_velocities, arrival_velocities, roots, branch_statuses, iterations, statuses, slot_count, solution_count, complete, mu, revolutions, long_arc, stream_ptr)
+
+        # On renvoit les tableaux CuPy sans transfert GPU -> CPU
+        return (departure_velocities, arrival_velocities, roots, branch_statuses, iterations, statuses, slot_count, solution_count, complete)
+
+
+
+
+
+
