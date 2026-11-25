@@ -233,7 +233,8 @@ def evaluate_grid(state_a, state_b, departure_dates, arrival_dates):
     dv_arrivee[solution_ok] = cp.linalg.norm(v_b - v_arrivee[0][:, solution_ok], axis=0)
     dv_total = dv_depart + dv_arrivee
 
-    # Store results of all candidates table en colonnes : la case k de chaque clé décrit l'arc k
+    # Store results of all candidates 
+    # table en colonnes : la case k de chaque clé décrit l'arc k
     candidates = {
         "departure_body": "A",
         "arrival_body": "B",
