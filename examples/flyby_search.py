@@ -92,12 +92,11 @@ def compute_points_a_and_c():
     return r_a, r_c
 
 
-def compute_positions_of_b(t_b):
-    """Étape 2 : position du corps B à chaque date de survol testée."""
-    # Le même état de départ de B (à t = 0), propagé jusqu'à chaque date t_b
-    b_at_t0 = tile_column(cp.asarray(STATE_B_T0, dtype=cp.float64), t_b.size)
-    b = propagate(b_at_t0, t_b)
-    return b[:3, :]
+def compute_states_of_b(t_b):
+    """Calcule l'état du corps B à chaque date de survol."""
+    state_b_ref = cp.asarray(STATE_B_T0, dtype=cp.float64)
+    b_at_t0 = tile_column(state_b_ref, t_b.size)
+    return propagate(b_at_t0, t_b)
 
 
 def solve_both_arcs(r_a, r_c, r_b, t_b):
@@ -137,8 +136,17 @@ def main():
     t_b = cp.asarray(T_B_CANDIDATES, dtype=cp.float64)
 
     r_a, r_c = compute_points_a_and_c()
-    r_b = compute_positions_of_b(t_b)
+    
+    
+    states_b = compute_states_of_b(t_b)
+    r_b = states_b[:3, :]
+    v_b = states_b[3:, :]
     v_in, v_out = solve_both_arcs(r_a, r_c, r_b, t_b)
+
+    # Soustraire la vitesse du corps B et calculer une norme par date.
+    speed_in = cp.linalg.norm(v_in - v_b, axis=0)
+    speed_out = cp.linalg.norm(v_out - v_b, axis=0)
+    residual = speed_out - speed_in
 
     # Étape 4 : contrôle sur la date de l'énoncé (t_b = 0).
     i0 = T_B_CANDIDATES.index(0.0)
@@ -148,11 +156,15 @@ def main():
 
     print(f"A = {fmt(r_a.get())} km")
     print(f"C = {fmt(r_c.get())} km\n")
-    print(f"{'t_b (s)':>8} | {'vitesse en arrivant en B (km/s)':^31} | {'vitesse en quittant B (km/s)':^31}")
-    for t, vi, vo in zip(t_b.get(), v_in.T.get(), v_out.T.get()):
-        print(f"{t:8.0f} | {fmt(vi)} | {fmt(vo)}")
+    assert abs(residual[i0].item()) < 1e-8
+    print(f"{'t_b (s)':>8} | {'v_in (km/s)':^31} | " f"{'v_out (km/s)':^31} | {'f(t_b) (km/s)':>15}")
+    
+    for t, vi, vo, f in zip(t_b.get(), v_in.T.get(), v_out.T.get(), residual.get()):
+        print(f"{t:8.0f} | {fmt(vi)} | {fmt(vo)} | {f:+15.8e}")
+    
     print("\nContrôle t_b = 0 : on retrouve bien les vitesses de l'énoncé.")
 
 
+    
 if __name__ == "__main__":
     main()
