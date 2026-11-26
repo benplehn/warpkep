@@ -24,7 +24,7 @@ On a donc 2 vitesses en B à t = 0: une juste avant le survol et une juste aprè
 """
 
 import cupy as cp
-
+from scipy.optimize import brentq
 import warpkep
 
 
@@ -69,12 +69,8 @@ def fmt(v):
     return "[" + " ".join(f"{x:9.4f}" for x in v) + "]"
 
 
-# ---------------------------------------------------------------------------
-# Étapes du calcul
-# ---------------------------------------------------------------------------
-
 def compute_points_a_and_c():
-    """Étape 1 : retrouver A et C à partir de l'état du véhicule au survol."""
+    """Retrouver A et C à partir de l'état du véhicule au survol."""
     # Deux états du véhicule au même endroit (le survol) à t = 0 :
     #   colonne 0 : sur l'arc d'approche (vitesse avant le survol) 
     #   colonne 1 : sur l'arc de départ  (vitesse après le survol).
@@ -100,7 +96,7 @@ def compute_states_of_b(t_b):
 
 
 def solve_both_arcs(r_a, r_c, r_b, t_b):
-    """Étape 3 : résoudre A → B et B → C par Lambert pour chaque date t_b.
+    """Résoudre A → B et B → C par Lambert pour chaque date t_b.
 
     Retourne :
         v_in  (3, n) : vitesse du véhicule en arrivant en B (fin de A → B)
@@ -132,23 +128,65 @@ def solve_both_arcs(r_a, r_c, r_b, t_b):
     v_out = v_depart[0, :, n:]   # vitesse de départ de B sur les arcs B → C
     return v_in, v_out
 
+
+
+def flyby_residual_at(t, r_a, r_c):
+    # La date sous forme de tableau CuPy FP64 de forme (1,)
+    t_cupy = cp.asarray([t], dtype=cp.float64)
+
+    # État de B à cette date (même appel que dans main)
+    states_b = compute_states_of_b(t_cupy)
+    r_b = states_b[:3]
+    v_b = states_b[3:]
+
+    # Les deux arcs de Lambert 
+    v_in, v_out = solve_both_arcs(r_a, r_c, r_b, t_cupy)
+
+    # Normes des vitesses relatives à B, puis leur différence
+    speed_in = cp.linalg.norm(v_in - v_b, axis = 0)
+    speed_out = cp.linalg.norm(v_out - v_b, axis= 0)
+    residual = speed_out - speed_in
+
+    # Un tableau d'un élément devient un float Python
+    return residual.item()
+
+
+
+
+
+
+
+
+
+
+
+
+
 def main():
     t_b = cp.asarray(T_B_CANDIDATES, dtype=cp.float64)
 
     r_a, r_c = compute_points_a_and_c()
-    
-    
+
+
+    # Brent cherche la date t_B où f(t_B) = 0 dans [-100, 100]. Il ne reçoit que les deux bornes, jamais la date témoin t_b = 0.
+    t_root, info = brentq(flyby_residual_at,  -100.0, 100.0, args=(r_a, r_c), full_output=True)
+    f_root = flyby_residual_at(t_root, r_a, r_c)
+    print(f"Brent : t_B = {t_root:+.3e} s, f(t_B) = {f_root:+.3e} km/s, " f"{info.iterations} itérations, convergé = {info.converged}")
+    assert info.converged
+    assert abs(t_root) < 1e-5
+    assert abs(f_root) < 1e-8
+
     states_b = compute_states_of_b(t_b)
     r_b = states_b[:3, :]
     v_b = states_b[3:, :]
     v_in, v_out = solve_both_arcs(r_a, r_c, r_b, t_b)
 
-    # Soustraire la vitesse du corps B et calculer une norme par date.
+    # Soustraire la vitesse du corps B et calculer une norme par date
     speed_in = cp.linalg.norm(v_in - v_b, axis=0)
     speed_out = cp.linalg.norm(v_out - v_b, axis=0)
     residual = speed_out - speed_in
 
-    # Étape 4 : contrôle sur la date de l'énoncé (t_b = 0).
+    # Contrôle sur la date de l'énoncé (t_b = 0)
     i0 = T_B_CANDIDATES.index(0.0)
     cp.testing.assert_array_equal(r_b[:, i0], cp.asarray(R_FLYBY))
     cp.testing.assert_allclose(v_in[:, i0], cp.asarray(V_BEFORE_FLYBY), atol=1e-8, rtol=0)
