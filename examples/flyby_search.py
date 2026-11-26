@@ -21,6 +21,9 @@ On a donc 2 vitesses en B à t = 0: une juste avant le survol et une juste aprè
      - A → B(t_b) en (t_b − t_a)  →  vitesse d'arrivée du véhicule en B 
      - B(t_b) → C en (t_c − t_b)  →  vitesse de départ du véhicule de B
 4. Contrôle : pour t_b = 0, on doit retrouver les deux vitesses de l'énoncé
+5. Brent cherche seul la date t_b où le flyby est gratuit (|v∞,in| = |v∞,out|) puis check_flyby vérifie le périastre et on chiffre le coût Δv en A et en C.
+6. On compare trois dates d'arrivée en C (C devient un corps en orbite circulaire) et on garde le trajet admissible le moins cher.
+7. Sur un mini-cas à deux arcs entrants, on montre qu'un beam search de largeur 1 trié sur le coût déjà dépensé, perd l'unique solution que l'exhaustif trouve.
 """
 
 import cupy as cp
@@ -110,7 +113,7 @@ def solve_both_arcs(r_a, r_c, r_b, t_b, t_c=T_C):
 
     # Durées de vol de chaque arc, elles doivent être strictement positives
     tof_in = t_b - T_A    # durée de A → B
-    tof_out = t_c - t_b   # durée de B → C   ← T_C remplacé par t_c
+    tof_out = t_c - t_b   # durée de B → C
     assert cp.all((tof_in > 0.0) & (tof_out > 0.0)).item()
 
     # Les 2n problèmes de Lambert sont rangés dans un seul lot GPU :
@@ -136,6 +139,7 @@ def solve_both_arcs(r_a, r_c, r_b, t_b, t_c=T_C):
 
 
 def flyby_velocities_at(t, r_a, r_c, t_c=T_C):
+    """Pour une date de survol t : vitesses en A, en B (entrée et sortie), en C, et vitesse de B."""
     dates = cp.asarray([t], dtype=cp.float64)
     state_b = compute_states_of_b(dates)
     v_dep_a, v_in, v_out, v_arr_c = solve_both_arcs(
@@ -145,6 +149,7 @@ def flyby_velocities_at(t, r_a, r_c, t_c=T_C):
 
 
 def flyby_residual_at(t, r_a, r_c, t_c=T_C):
+    """f(t) = |v∞,out| − |v∞,in| à la date t ; c'est la fonction dont Brent cherche le zéro."""
     _, v_in, v_out, _, v_b = flyby_velocities_at(t, r_a, r_c, t_c)
     speed_in = cp.linalg.norm(v_in - v_b)
     speed_out = cp.linalg.norm(v_out - v_b)
@@ -225,21 +230,26 @@ def compare_arrivals(r_a, r_c):
     return best
 
 
+def toy_flyby_case():
+    """Deux arcs entrants au même B, à la même date, un arc sortant."""
+    v_b = np.array([0.0, 10.0, 0.0])     # vitesse du corps B (km/s)
+    v_out = np.array([0.0, 13.0, 0.0])   # vitesse de sortie, arc sortant unique (km/s)
+    arrival_cost = 0.5                   # coût d'arrivée fictif (km/s)
+    incoming_arcs = [
+        {"name": "arc 1", "v_in": np.array([4.0, 10.0, 0.0]), "cost": 1.0},
+        {"name": "arc 2", "v_in": np.array([3.0, 10.0, 0.0]), "cost": 2.0},
+    ]
+    return v_b, v_out, arrival_cost, incoming_arcs
+
+
 def exhaustive_reference():
     """Recherche exhaustive sur un mini-graphe de raccords en B.
 
     Deux arcs entrants arrivent au même B à la même date, un seul arc sortant.
     On teste TOUS les raccords (entrant → sortant) avec check_flyby puis on garde le moins cher parmi ceux qui sont acceptés.
     """
-    v_b = np.array([0.0, 10.0, 0.0])     # vitesse du corps B (km/s)
-    v_out = np.array([0.0, 13.0, 0.0])   # vitesse de sortie, arc sortant unique (km/s)
-    arrival_cost = 0.5                   # coût d'arrivée fictif (km/s)
 
-    incoming_arcs = [
-        {"name": "arc 1", "v_in": np.array([4.0, 10.0, 0.0]), "cost": 1.0},
-        {"name": "arc 2", "v_in": np.array([3.0, 10.0, 0.0]), "cost": 2.0},
-    ]
-
+    v_b, v_out, arrival_cost, incoming_arcs = toy_flyby_case()
     best = None
     for arc in incoming_arcs:
         # Normes des vitesses relatives à B, pour comprendre le verdict
@@ -264,53 +274,56 @@ def exhaustive_reference():
     return best
 
 
+def beam_search(k):
+    """Beam search de largeur k sur le mini-cas.
 
+    1. On trie les arcs entrants par coût déjà dépensé et on garde les k premiers
+       La coupe a lieu AVANT de tester le raccord en B
+    2. On teste le raccord des seuls arcs conservés avec check_flyby et on ajoute le coût d'arrivée aux trajets admissibles et on garde le moins cher
 
+    Retourne le meilleur trajet (dict), ou None si le beam ne trouve rien.
+    """
+    v_b, v_out, arrival_cost, incoming_arcs = toy_flyby_case()
 
+    # Étape 1 : élagage sur le coût déjà dépensé, sans regarder la suite
+    beam = sorted(incoming_arcs, key=lambda arc: arc["cost"])[:k]
+    print(f"K = {k} : beam conservé = {[arc['name'] for arc in beam]}")
 
+    # Étape 2 : raccord en B pour les arcs conservés seulement
+    best = None
+    for arc in beam:
+        feasible, r_p = check_flyby(v_b, arc["v_in"], v_out,
+                                    mu_b=MU_B, r_min=R_MIN, speed_atol=1e-8)
+        print(f"  {arc['name']} : {'accepté' if feasible else 'rejeté'}, r_p = {r_p}")
+        if not feasible:
+            continue
 
-def main():
+        total = arc["cost"] + arrival_cost
+        if best is None or total < best["total"]:
+            best = {"name": arc["name"], "total": total, "r_p": r_p}
+
+    if best is None:
+        print(f"  K = {k} : aucun trajet trouvé")
+    else:
+        print(f"  K = {k} : {best['name']}, coût total = {best['total']:.1f} km/s")
+    return best
+
+def check_grid(r_a, r_c):
+    """Tableau des 5 dates de survol et contrôle à t_b = 0.
+
+    Pour chaque t_b de T_B_CANDIDATES, on résout A → B(t_b) et B(t_b) → C,
+    puis on affiche le résidu f(t_b) = |v∞,out| − |v∞,in|.
+    À t_b = 0, on doit retrouver les vitesses de l'énoncé et f = 0.
+    """
     t_b = cp.asarray(T_B_CANDIDATES, dtype=cp.float64)
 
-    r_a, r_c = compute_points_a_and_c()
-
-
-    # Brent cherche la date t_B où f(t_B) = 0 dans [-100, 100]. Il ne reçoit que les deux bornes, jamais la date témoin t_b = 0.
-    t_root, info = brentq(flyby_residual_at,  -100.0, 100.0, args=(r_a, r_c), full_output=True)
-    v_dep_a, v_in_r, v_out_r, v_arr_c, v_b_r = flyby_velocities_at(t_root, r_a, r_c)
-
-    # On calcule la vitesse du véhicule par rapport au corps B juste avant et juste après le survol, et on vérifie que la différence est nulle.
-    speed_in_root = cp.linalg.norm(v_in_r - v_b_r)
-    speed_out_root = cp.linalg.norm(v_out_r - v_b_r)
-    f_root = (speed_out_root - speed_in_root).item()
-    print(f"Brent : t_B = {t_root:+.3e} s, f(t_B) = {f_root:+.3e} km/s, " f"{info.iterations} itérations, convergé = {info.converged}")
-    assert info.converged
-    assert abs(t_root) < 1e-5
-    assert abs(f_root) < 1e-8
-
-    # On vérifie que le survol est bien faisable, et on récupère le rayon de périastre r_p.
-    feasible, r_p = check_flyby(v_b_r.get(), v_in_r.get(), v_out_r.get(), mu_b=MU_B, r_min=R_MIN, speed_atol=1e-8,)
-    assert feasible, f"Survol refusé à t_B = {t_root:.6g} s, r_p = {r_p}"
-    assert abs(r_p - 4142.14) < 0.01
-    print(f"Survol accepté, r_p = {r_p:.2f} km")
-
-    # On calcule les vitesses circulaires au point A et C, puis les Δv de départ et d'arrivée.
-    v_body_a = circular_velocity_xy(r_a)
-    v_body_c = circular_velocity_xy(r_c)
-    dv_a = cp.linalg.norm(v_dep_a - v_body_a).item()
-    dv_c = cp.linalg.norm(v_body_c - v_arr_c).item()
-
-    print(f"Δv départ A  = {dv_a:.6f} km/s")
-    print(f"Δv arrivée C = {dv_c:.6f} km/s")
-    print(f"Δv total     = {dv_a + dv_c:.6f} km/s")
-
-    # On calcule les vitesses du véhicule par rapport au corps B juste avant et juste après le survol pour toutes les dates t_b testées.
+    # État de B à chaque date, puis les deux arcs de Lambert
     states_b = compute_states_of_b(t_b)
     r_b = states_b[:3, :]
     v_b = states_b[3:, :]
     _, v_in, v_out, _ = solve_both_arcs(r_a, r_c, r_b, t_b)
 
-    # Soustraire la vitesse du corps B et calculer une norme par date
+    # Normes des vitesses relatives à B, une par date (axis=0 : on écrase vx, vy, vz)
     speed_in = cp.linalg.norm(v_in - v_b, axis=0)
     speed_out = cp.linalg.norm(v_out - v_b, axis=0)
     residual = speed_out - speed_in
@@ -320,25 +333,70 @@ def main():
     cp.testing.assert_array_equal(r_b[:, i0], cp.asarray(R_FLYBY))
     cp.testing.assert_allclose(v_in[:, i0], cp.asarray(V_BEFORE_FLYBY), atol=1e-8, rtol=0)
     cp.testing.assert_allclose(v_out[:, i0], cp.asarray(V_AFTER_FLYBY), atol=1e-8, rtol=0)
+    assert abs(residual[i0].item()) < 1e-8
 
     print(f"A = {fmt(r_a.get())} km")
     print(f"C = {fmt(r_c.get())} km\n")
-    assert abs(residual[i0].item()) < 1e-8
-    print(f"{'t_b (s)':>8} | {'v_in (km/s)':^31} | " f"{'v_out (km/s)':^31} | {'f(t_b) (km/s)':>15}")
-
-    # On affiche les vitesses du véhicule par rapport au corps B juste avant et juste après le survol pour toutes les dates t_b testées.
+    print(f"{'t_b (s)':>8} | {'v_in (km/s)':^31} | {'v_out (km/s)':^31} | {'f(t_b) (km/s)':>15}")
     for t, vi, vo, f in zip(t_b.get(), v_in.T.get(), v_out.T.get(), residual.get()):
         print(f"{t:8.0f} | {fmt(vi)} | {fmt(vo)} | {f:+15.8e}")
-    
-    print("\nContrôle t_b = 0 : on retrouve bien les vitesses de l'énoncé.")
-
-    # On compare les trajets pour plusieurs dates d'arrivée en C, et on affiche le meilleur 
-    compare_arrivals(r_a, r_c)
-
-    # On vérifie que l'algorithme de recherche exhaustive sur un mini-graphe de raccords en B retrouve bien le meilleur trajet
-    exhaustive_reference()
+    print("\nContrôle t_b = 0 : on retrouve bien les vitesses de l'énoncé.\n")
 
 
-    
+def check_brent(r_a, r_c):
+    """Brent retrouve la date de survol, puis on vérifie et chiffre le trajet.
+
+    1. Brent cherche le t_B où f(t_B) = 0 dans T_B_BRACKET, sans connaître la date témoin.
+    2. check_flyby vérifie que le survol est admissible (r_p ≥ R_MIN).
+    3. On calcule le coût : Δv au départ de A et à l'arrivée en C.
+    """
+    # Brent : il ne reçoit que les deux bornes
+    lo, hi = T_B_BRACKET
+    t_root, info = brentq(flyby_residual_at, lo, hi, args=(r_a, r_c), full_output=True)
+    f_root = flyby_residual_at(t_root, r_a, r_c)
+    print(f"Brent : t_B = {t_root:+.3e} s, f(t_B) = {f_root:+.3e} km/s, "
+          f"{info.iterations} itérations, convergé = {info.converged}")
+    assert info.converged
+    assert abs(t_root) < 1e-5
+    assert abs(f_root) < 1e-8
+
+    # Le survol est-il physiquement possible ?
+    v_dep_a, v_in, v_out, v_arr_c, v_b = flyby_velocities_at(t_root, r_a, r_c)
+    feasible, r_p = check_flyby(v_b.get(), v_in.get(), v_out.get(),
+                                mu_b=MU_B, r_min=R_MIN, speed_atol=1e-8)
+    assert feasible, f"Survol refusé à t_B = {t_root:.6g} s, r_p = {r_p}"
+    assert abs(r_p - 4142.14) < 0.01
+    print(f"Survol accepté, r_p = {r_p:.2f} km")
+
+    # Coût : on part de l'orbite circulaire en A et on arrive sur l'orbite circulaire en C
+    dv_a = cp.linalg.norm(v_dep_a - circular_velocity_xy(r_a)).item()
+    dv_c = cp.linalg.norm(circular_velocity_xy(r_c) - v_arr_c).item()
+    print(f"Δv départ A  = {dv_a:.6f} km/s")
+    print(f"Δv arrivée C = {dv_c:.6f} km/s")
+    print(f"Δv total     = {dv_a + dv_c:.6f} km/s\n")
+
+
+def check_beam_vs_exhaustive():
+    """Le beam search de largeur 1 rate la solution que l'exhaustif trouve."""
+    reference = exhaustive_reference()
+
+    # K = 1 : le beam garde l'arc 1, le moins cher, qui sera rejeté en B
+    assert beam_search(1) is None
+
+    # K = 2 : le beam garde tout et retrouve l'exhaustif
+    best_k2 = beam_search(2)
+    assert best_k2 is not None
+    assert best_k2["name"] == reference["name"]
+    assert abs(best_k2["total"] - reference["total"]) < 1e-12
+
+
+def main():
+    r_a, r_c = compute_points_a_and_c()
+    check_grid(r_a, r_c)          # Tableau des 5 dates
+    check_brent(r_a, r_c)         # Brent, périastre, Δv
+    compare_arrivals(r_a, r_c)    # Trois dates d'arrivée
+    check_beam_vs_exhaustive()    # Beam contre exhaustif
+
+
 if __name__ == "__main__":
     main()
