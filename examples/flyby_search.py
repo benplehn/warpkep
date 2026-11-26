@@ -128,28 +128,35 @@ def solve_both_arcs(r_a, r_c, r_b, t_b):
     assert cp.all(branch_statuses[0] == 0).item(), branch_statuses[0]
 
     # Le premier indice choisit la solution (ici la seule, l'indice 0)
-    v_in = v_arrive[0, :, :n]    # vitesse d'arrivée en B sur les arcs A → B
-    v_out = v_depart[0, :, n:]   # vitesse de départ de B sur les arcs B → C
-    return v_in, v_out
+    v_dep_a = v_depart[0, :, :n]  # départ de A
+    v_in = v_arrive[0, :, :n]     # arrivée en B
+    v_out = v_depart[0, :, n:]    # départ de B
+    v_arr_c = v_arrive[0, :, n:]  # arrivée en C
+    return v_dep_a, v_in, v_out, v_arr_c
 
 
 def flyby_velocities_at(t, r_a, r_c):
-    """Vitesses du véhicule (v_in, v_out) et de B (v_b) en B, pour une date t."""
-    
-    t_cupy = cp.asarray([t], dtype=cp.float64)
-    states_b = compute_states_of_b(t_cupy)
-    r_b = states_b[:3]
-    v_b = states_b[3:]
-    v_in, v_out = solve_both_arcs(r_a, r_c, r_b, t_cupy)
-    
-    return v_in[:, 0], v_out[:, 0], v_b[:, 0] # [:, 0] : on prend l'unique colonne et on obtient des vecteurs de forme (3,)
+    dates = cp.asarray([t], dtype=cp.float64)
+    state_b = compute_states_of_b(dates)
+    v_dep_a, v_in, v_out, v_arr_c = solve_both_arcs(
+        r_a, r_c, state_b[:3], dates
+    )
+    return v_dep_a[:, 0], v_in[:, 0], v_out[:, 0], v_arr_c[:, 0], state_b[3:, 0]
 
 
 def flyby_residual_at(t, r_a, r_c):
-    v_in, v_out, v_b = flyby_velocities_at(t, r_a, r_c)
+    _, v_in, v_out, _, v_b = flyby_velocities_at(t, r_a, r_c)
     speed_in = cp.linalg.norm(v_in - v_b)
     speed_out = cp.linalg.norm(v_out - v_b)
     return (speed_out - speed_in).item()
+
+
+def circular_velocity_xy(position):
+    """Vitesse circulaire prograde au point donné dans le plan xy."""
+    x, y, _ = position
+    radius = cp.linalg.norm(position)
+    tangent = cp.stack((-y, x, cp.zeros_like(x))) / radius
+    return cp.sqrt(MU_CENTRAL / radius) * tangent
 
 
 
@@ -168,23 +175,38 @@ def main():
 
     # Brent cherche la date t_B où f(t_B) = 0 dans [-100, 100]. Il ne reçoit que les deux bornes, jamais la date témoin t_b = 0.
     t_root, info = brentq(flyby_residual_at,  -100.0, 100.0, args=(r_a, r_c), full_output=True)
-    f_root = flyby_residual_at(t_root, r_a, r_c)
+    v_dep_a, v_in_r, v_out_r, v_arr_c, v_b_r = flyby_velocities_at(t_root, r_a, r_c)
+
+    # On calcule la vitesse du véhicule par rapport au corps B juste avant et juste après le survol, et on vérifie que la différence est nulle.
+    speed_in_root = cp.linalg.norm(v_in_r - v_b_r)
+    speed_out_root = cp.linalg.norm(v_out_r - v_b_r)
+    f_root = (speed_out_root - speed_in_root).item()
     print(f"Brent : t_B = {t_root:+.3e} s, f(t_B) = {f_root:+.3e} km/s, " f"{info.iterations} itérations, convergé = {info.converged}")
     assert info.converged
     assert abs(t_root) < 1e-5
     assert abs(f_root) < 1e-8
 
-    v_in_r, v_out_r, v_b_r = flyby_velocities_at(t_root, r_a, r_c)
-
+    # On vérifie que le survol est bien faisable, et on récupère le rayon de périastre r_p.
     feasible, r_p = check_flyby(v_b_r.get(), v_in_r.get(), v_out_r.get(), mu_b=MU_B, r_min=R_MIN, speed_atol=1e-8,)
     assert feasible, f"Survol refusé à t_B = {t_root:.6g} s, r_p = {r_p}"
     assert abs(r_p - 4142.14) < 0.01
     print(f"Survol accepté, r_p = {r_p:.2f} km")
 
+    # On calcule les vitesses circulaires au point A et C, puis les Δv de départ et d'arrivée.
+    v_body_a = circular_velocity_xy(r_a)
+    v_body_c = circular_velocity_xy(r_c)
+    dv_a = cp.linalg.norm(v_dep_a - v_body_a).item()
+    dv_c = cp.linalg.norm(v_body_c - v_arr_c).item()
+
+    print(f"Δv départ A  = {dv_a:.6f} km/s")
+    print(f"Δv arrivée C = {dv_c:.6f} km/s")
+    print(f"Δv total     = {dv_a + dv_c:.6f} km/s")
+
+    # On calcule les vitesses du véhicule par rapport au corps B juste avant et juste après le survol pour toutes les dates t_b testées.
     states_b = compute_states_of_b(t_b)
     r_b = states_b[:3, :]
     v_b = states_b[3:, :]
-    v_in, v_out = solve_both_arcs(r_a, r_c, r_b, t_b)
+    _, v_in, v_out, _ = solve_both_arcs(r_a, r_c, r_b, t_b)
 
     # Soustraire la vitesse du corps B et calculer une norme par date
     speed_in = cp.linalg.norm(v_in - v_b, axis=0)
@@ -201,7 +223,8 @@ def main():
     print(f"C = {fmt(r_c.get())} km\n")
     assert abs(residual[i0].item()) < 1e-8
     print(f"{'t_b (s)':>8} | {'v_in (km/s)':^31} | " f"{'v_out (km/s)':^31} | {'f(t_b) (km/s)':>15}")
-    
+
+    # On affiche les vitesses du véhicule par rapport au corps B juste avant et juste après le survol pour toutes les dates t_b testées.
     for t, vi, vo, f in zip(t_b.get(), v_in.T.get(), v_out.T.get(), residual.get()):
         print(f"{t:8.0f} | {fmt(vi)} | {fmt(vo)} | {f:+15.8e}")
     
