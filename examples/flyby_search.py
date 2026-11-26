@@ -26,11 +26,15 @@ On a donc 2 vitesses en B à t = 0: une juste avant le survol et une juste aprè
 import cupy as cp
 from scipy.optimize import brentq
 import warpkep
-
+from flyby import check_flyby
 
 MU_CENTRAL = 1e7  # paramètre gravitationnel du corps central (km³/s²)
 T_A = -1000.0     # date à laquelle le véhicule est en A (s)
 T_C = 1000.0      # date à laquelle le véhicule est en C (s)
+
+# Corps B
+MU_B = 9.0e4      # paramètre gravitationnel de B (km³/s²)
+R_MIN = 4000.0    # rayon de périastre minimal autorisé (km)
 
 # Position du survol à t = 0 (c'est aussi la position de B à t = 0).
 R_FLYBY = [100_000.0, 0.0, 0.0]        # km
@@ -104,7 +108,7 @@ def solve_both_arcs(r_a, r_c, r_b, t_b):
     """
     n = t_b.size
 
-    # Durées de vol de chaque arc ; elles doivent être strictement positives.
+    # Durées de vol de chaque arc, elles doivent être strictement positives
     tof_in = t_b - T_A    # durée de A → B
     tof_out = T_C - t_b   # durée de B → C
     assert cp.all((tof_in > 0.0) & (tof_out > 0.0)).item()
@@ -116,42 +120,36 @@ def solve_both_arcs(r_a, r_c, r_b, t_b):
     arrivals = cp.ascontiguousarray(cp.concatenate((r_b, tile_column(r_c, n)), axis=1))
     durations = cp.concatenate((tof_in, tof_out))
 
-    # revolutions=0 et long_arc=False : on cherche l'orbite directe (arc court, moins d'un tour complet). Il y a alors une seule solution par problème.
+    # revolutions=0 et long_arc=False : on cherche l'orbite directe (arc court, moins d'un tour complet). Il y a alors une seule solution par problème
     v_depart, v_arrive, _, branch_statuses, _, lambert_statuses, _, solution_count, complete = warpkep.solve_lambert(departures, arrivals, durations, mu=MU_CENTRAL, revolutions=0, long_arc=False,)
     assert cp.all(lambert_statuses == 0).item(), lambert_statuses
     assert cp.all(solution_count == 1).item(), solution_count
     assert cp.all(complete == 1).item(), complete
     assert cp.all(branch_statuses[0] == 0).item(), branch_statuses[0]
 
-    # Le premier indice choisit la solution (ici la seule, l'indice 0).
+    # Le premier indice choisit la solution (ici la seule, l'indice 0)
     v_in = v_arrive[0, :, :n]    # vitesse d'arrivée en B sur les arcs A → B
     v_out = v_depart[0, :, n:]   # vitesse de départ de B sur les arcs B → C
     return v_in, v_out
 
 
-
-def flyby_residual_at(t, r_a, r_c):
-    # La date sous forme de tableau CuPy FP64 de forme (1,)
+def flyby_velocities_at(t, r_a, r_c):
+    """Vitesses du véhicule (v_in, v_out) et de B (v_b) en B, pour une date t."""
+    
     t_cupy = cp.asarray([t], dtype=cp.float64)
-
-    # État de B à cette date (même appel que dans main)
     states_b = compute_states_of_b(t_cupy)
     r_b = states_b[:3]
     v_b = states_b[3:]
-
-    # Les deux arcs de Lambert 
     v_in, v_out = solve_both_arcs(r_a, r_c, r_b, t_cupy)
-
-    # Normes des vitesses relatives à B, puis leur différence
-    speed_in = cp.linalg.norm(v_in - v_b, axis = 0)
-    speed_out = cp.linalg.norm(v_out - v_b, axis= 0)
-    residual = speed_out - speed_in
-
-    # Un tableau d'un élément devient un float Python
-    return residual.item()
+    
+    return v_in[:, 0], v_out[:, 0], v_b[:, 0] # [:, 0] : on prend l'unique colonne et on obtient des vecteurs de forme (3,)
 
 
-
+def flyby_residual_at(t, r_a, r_c):
+    v_in, v_out, v_b = flyby_velocities_at(t, r_a, r_c)
+    speed_in = cp.linalg.norm(v_in - v_b)
+    speed_out = cp.linalg.norm(v_out - v_b)
+    return (speed_out - speed_in).item()
 
 
 
@@ -175,6 +173,13 @@ def main():
     assert info.converged
     assert abs(t_root) < 1e-5
     assert abs(f_root) < 1e-8
+
+    v_in_r, v_out_r, v_b_r = flyby_velocities_at(t_root, r_a, r_c)
+
+    feasible, r_p = check_flyby(v_b_r.get(), v_in_r.get(), v_out_r.get(), mu_b=MU_B, r_min=R_MIN, speed_atol=1e-8,)
+    assert feasible, f"Survol refusé à t_B = {t_root:.6g} s, r_p = {r_p}"
+    assert abs(r_p - 4142.14) < 0.01
+    print(f"Survol accepté, r_p = {r_p:.2f} km")
 
     states_b = compute_states_of_b(t_b)
     r_b = states_b[:3, :]
