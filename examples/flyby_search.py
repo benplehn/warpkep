@@ -48,7 +48,8 @@ STATE_B_T0 = R_FLYBY + [0.0, 10.0, 0.0]
 
 # Dates de survol testées (s). t_b = 0 correspond au cas de l'énoncé.
 T_B_CANDIDATES = [-200.0, -100.0, 0.0, 100.0, 200.0]
-
+T_C_CANDIDATES = [990.0, 1000.0, 1010.0]   # dates d'arrivée testées (s)
+T_B_BRACKET = (-100.0, 100.0)              # intervalle de recherche de Brent (s)
 
 def as_columns(*vectors):
     """Range des vecteurs en colonnes dans un tableau GPU contigu."""
@@ -99,18 +100,16 @@ def compute_states_of_b(t_b):
     return propagate(b_at_t0, t_b)
 
 
-def solve_both_arcs(r_a, r_c, r_b, t_b):
+def solve_both_arcs(r_a, r_c, r_b, t_b, t_c=T_C):
     """Résoudre A → B et B → C par Lambert pour chaque date t_b.
 
-    Retourne :
-        v_in  (3, n) : vitesse du véhicule en arrivant en B (fin de A → B)
-        v_out (3, n) : vitesse du véhicule en quittant B   (début de B → C)
+    t_c : date d'arrivée en C (s), T_C par défaut.
     """
     n = t_b.size
 
     # Durées de vol de chaque arc, elles doivent être strictement positives
     tof_in = t_b - T_A    # durée de A → B
-    tof_out = T_C - t_b   # durée de B → C
+    tof_out = t_c - t_b   # durée de B → C   ← T_C remplacé par t_c
     assert cp.all((tof_in > 0.0) & (tof_out > 0.0)).item()
 
     # Les 2n problèmes de Lambert sont rangés dans un seul lot GPU :
@@ -135,17 +134,17 @@ def solve_both_arcs(r_a, r_c, r_b, t_b):
     return v_dep_a, v_in, v_out, v_arr_c
 
 
-def flyby_velocities_at(t, r_a, r_c):
+def flyby_velocities_at(t, r_a, r_c, t_c=T_C):
     dates = cp.asarray([t], dtype=cp.float64)
     state_b = compute_states_of_b(dates)
     v_dep_a, v_in, v_out, v_arr_c = solve_both_arcs(
-        r_a, r_c, state_b[:3], dates
+        r_a, r_c, state_b[:3], dates, t_c
     )
     return v_dep_a[:, 0], v_in[:, 0], v_out[:, 0], v_arr_c[:, 0], state_b[3:, 0]
 
 
-def flyby_residual_at(t, r_a, r_c):
-    _, v_in, v_out, _, v_b = flyby_velocities_at(t, r_a, r_c)
+def flyby_residual_at(t, r_a, r_c, t_c=T_C):
+    _, v_in, v_out, _, v_b = flyby_velocities_at(t, r_a, r_c, t_c)
     speed_in = cp.linalg.norm(v_in - v_b)
     speed_out = cp.linalg.norm(v_out - v_b)
     return (speed_out - speed_in).item()
@@ -157,6 +156,72 @@ def circular_velocity_xy(position):
     radius = cp.linalg.norm(position)
     tangent = cp.stack((-y, x, cp.zeros_like(x))) / radius
     return cp.sqrt(MU_CENTRAL / radius) * tangent
+
+
+def state_of_c_at(t_c, state_c_ref):
+    """Position et vitesse du corps C à la date t_c.
+
+    state_c_ref est l'état de C à T_C ; on le propage de (t_c − T_C).
+    """
+    state = propagate(tile_column(state_c_ref, 1), [t_c - T_C])
+    return state[:3, 0], state[3:, 0]
+
+
+def evaluate_arrival(t_c, r_a, state_c_ref):
+    """Un trajet complet A → B → C pour une date d'arrivée t_c.
+
+    Retourne un dict, ou None si Brent n'a pas de racine dans T_B_BRACKET.
+    """
+    r_c_tc, v_c_tc = state_of_c_at(t_c, state_c_ref)
+
+    # Brent n'a le droit de démarrer que si f change de signe entre les bornes.
+    lo, hi = T_B_BRACKET
+    f_lo = flyby_residual_at(lo, r_a, r_c_tc, t_c)
+    f_hi = flyby_residual_at(hi, r_a, r_c_tc, t_c)
+    if f_lo * f_hi > 0.0:
+        print(f"t_c = {t_c:.0f} s : f({lo:+.0f}) = {f_lo:+.3e}, f({hi:+.0f}) = {f_hi:+.3e}" " → même signe, pas de racine encadrée")
+        return None
+
+    t_root, info = brentq(flyby_residual_at, lo, hi, args=(r_a, r_c_tc, t_c), full_output=True)
+    assert info.converged
+
+    # Vitesses à la date de survol trouvée
+    v_dep_a, v_in, v_out, v_arr_c, v_b = flyby_velocities_at(t_root, r_a, r_c_tc, t_c)
+
+    # Périastre : le survol est-il admissible ?
+    feasible, r_p = check_flyby(v_b.get(), v_in.get(), v_out.get(), mu_b=MU_B, r_min=R_MIN, speed_atol=1e-8)
+
+    # Coût : départ depuis l'orbite circulaire en A, arrivée sur le mouvement de C
+    dv_a = cp.linalg.norm(v_dep_a - circular_velocity_xy(r_a)).item()
+    dv_c = cp.linalg.norm(v_c_tc - v_arr_c).item()
+
+    return {"t_c": t_c, "t_b": t_root, "r_p": r_p, "feasible": feasible, "dv_a": dv_a, "dv_c": dv_c, "dv_total": dv_a + dv_c}
+
+
+def compare_arrivals(r_a, r_c):
+    """Compare les trajets pour plusieurs dates d'arrivée en C."""
+    # État de référence de C à T_C : position r_c, vitesse circulaire.
+    state_c_ref = cp.ascontiguousarray(cp.concatenate((r_c, circular_velocity_xy(r_c))))
+
+    results = [evaluate_arrival(t_c, r_a, state_c_ref) for t_c in T_C_CANDIDATES]
+    results = [r for r in results if r is not None]
+
+    print(f"\n{'t_c (s)':>8} | {'t_b (s)':>12} | {'r_p (km)':>10} | " f"{'Δv total (km/s)':>16} | admissible")
+    for r in results:
+        rp_text = "—" if r["r_p"] is None else f"{r['r_p']:.2f}"
+        verdict = "oui" if r["feasible"] else "non"
+        print(f"{r['t_c']:8.0f} | {r['t_b']:+12.6f} | {rp_text:>10} | " f"{r['dv_total']:16.6f} | {verdict}")
+    
+    # Contrôle : la ligne t_c = 1000 s doit retrouver le trajet de référence.
+    ref = next(r for r in results if r["t_c"] == T_C)
+    assert abs(ref["dv_total"] - 6.038943) < 1e-6, ref["dv_total"]
+
+    # Le meilleur trajet, parmi les seuls survols admissibles
+    admissible = [r for r in results if r["feasible"]]
+    assert admissible, "aucun trajet admissible"
+    best = min(admissible, key=lambda r: r["dv_total"])
+    print(f"\nMeilleur trajet : t_c = {best['t_c']:.0f} s, t_b = {best['t_b']:+.6f} s, " f"Δv total = {best['dv_total']:.6f} km/s")
+    return best
 
 
 
@@ -229,6 +294,9 @@ def main():
         print(f"{t:8.0f} | {fmt(vi)} | {fmt(vo)} | {f:+15.8e}")
     
     print("\nContrôle t_b = 0 : on retrouve bien les vitesses de l'énoncé.")
+
+
+    compare_arrivals(r_a, r_c)
 
 
     
