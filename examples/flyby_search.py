@@ -24,6 +24,7 @@ On a donc 2 vitesses en B à t = 0: une juste avant le survol et une juste aprè
 5. Brent cherche seul la date t_b où le flyby est gratuit (|v∞,in| = |v∞,out|) puis check_flyby vérifie le périastre et on chiffre le coût Δv en A et en C.
 6. On compare trois dates d'arrivée en C (C devient un corps en orbite circulaire) et on garde le trajet admissible le moins cher.
 7. Sur un mini-cas à deux arcs entrants, on montre qu'un beam search de largeur 1 trié sur le coût déjà dépensé, perd l'unique solution que l'exhaustif trouve.
+8. On applique la même comparaison aux arcs Lambert de l'étape 6 : chaque trajet est coupé en un arc A → B et un arc B → C datés, puis l'exhaustif et le beam (K = 1, 2, 3) cherchent le meilleur raccord en B sur ce même ensemble d'arcs.
 """
 
 import cupy as cp
@@ -54,6 +55,8 @@ STATE_B_T0 = R_FLYBY + [0.0, 10.0, 0.0]
 T_B_CANDIDATES = [-200.0, -100.0, 0.0, 100.0, 200.0]
 T_C_CANDIDATES = [990.0, 1000.0, 1010.0]   # dates d'arrivée testées (s)
 T_B_BRACKET = (-100.0, 100.0)              # intervalle de recherche de Brent (s)
+
+DATE_ATOL = 1e-9   # tolérance pour dire que deux arcs passent en B « à la même date » (s)
 
 def as_columns(*vectors):
     """Range des vecteurs en colonnes dans un tableau GPU contigu."""
@@ -201,11 +204,14 @@ def evaluate_arrival(t_c, r_a, state_c_ref):
     dv_a = cp.linalg.norm(v_dep_a - circular_velocity_xy(r_a)).item()
     dv_c = cp.linalg.norm(v_c_tc - v_arr_c).item()
 
-    return {"t_c": t_c, "t_b": t_root, "r_p": r_p, "feasible": feasible, "dv_a": dv_a, "dv_c": dv_c, "dv_total": dv_a + dv_c}
-
+    # On retourne un dict avec toutes les informations du trajet
+    return {"t_c": t_c, "t_b": t_root, "r_p": r_p, "feasible": feasible, "dv_a": dv_a, "dv_c": dv_c, "dv_total": dv_a + dv_c, "v_in": v_in.get(), "v_out": v_out.get(), "v_b": v_b.get()}
 
 def compare_arrivals(r_a, r_c):
-    """Compare les trajets pour plusieurs dates d'arrivée en C."""
+    """Compare les trajets pour plusieurs dates d'arrivée en C.
+    
+    Retourne la liste des trajets (un dict par t_c)
+    """
     # État de référence de C à T_C : position r_c, vitesse circulaire.
     state_c_ref = cp.ascontiguousarray(cp.concatenate((r_c, circular_velocity_xy(r_c))))
 
@@ -227,7 +233,7 @@ def compare_arrivals(r_a, r_c):
     assert admissible, "aucun trajet admissible"
     best = min(admissible, key=lambda r: r["dv_total"])
     print(f"\nMeilleur trajet : t_c = {best['t_c']:.0f} s, t_b = {best['t_b']:+.6f} s, " f"Δv total = {best['dv_total']:.6f} km/s")
-    return best
+    return results
 
 
 def toy_flyby_case():
@@ -390,12 +396,91 @@ def check_beam_vs_exhaustive():
     assert abs(best_k2["total"] - reference["total"]) < 1e-12
 
 
+def build_arc_sets(results):
+    """Coupe chaque trajet de la 16D.2 en deux arcs datés.
+
+    Arc entrant A → B : date en B, vitesse d'arrivée en B, coût Δv_A.
+    Arc sortant B → C : date en B, vitesse de départ de B, coût Δv_C.
+    """
+    incoming, outgoing = [], []
+    for r in results:
+        label = f"t_c = {r['t_c']:.0f} s"
+        incoming.append({"name": f"A→B ({label})", "t_b": r["t_b"],
+                         "v_in": r["v_in"], "v_b": r["v_b"], "cost": r["dv_a"]})
+        outgoing.append({"name": f"B→C ({label})", "t_b": r["t_b"], "t_c": r["t_c"],
+                         "v_out": r["v_out"], "cost": r["dv_c"]})
+    return incoming, outgoing
+
+
+def search_lambert_arcs(incoming, outgoing, k=None):
+    """Recherche sur les arcs Lambert : exhaustive si k=None, beam de largeur k sinon.
+
+    1. On classe les arcs entrants par Δv_A (coût déjà dépensé) et on garde les k premiers.
+    2. Pour chaque arc conservé, on essaie les sorties qui partent de B à la même date,
+       on vérifie le raccord avec check_flyby, puis on ajoute Δv_C.
+
+    Retourne (meilleur trajet ou None, nombre de raccords testés).
+    """
+    kept = sorted(incoming, key=lambda arc: arc["cost"])
+    if k is not None:
+        kept = kept[:k]
+
+    best, n_tests = None, 0
+    for arc_in in kept:
+        for arc_out in outgoing:
+            # Un raccord n'a de sens que si les deux arcs passent en B au même instant
+            if abs(arc_out["t_b"] - arc_in["t_b"]) > DATE_ATOL:
+                continue
+
+            n_tests += 1
+            feasible, r_p = check_flyby(arc_in["v_b"], arc_in["v_in"], arc_out["v_out"],
+                                        mu_b=MU_B, r_min=R_MIN, speed_atol=1e-8)
+            if not feasible:
+                continue
+
+            total = arc_in["cost"] + arc_out["cost"]
+            if best is None or total < best["total"]:
+                best = {"total": total, "t_b": arc_in["t_b"], "t_c": arc_out["t_c"],
+                        "r_p": r_p, "arcs": (arc_in["name"], arc_out["name"])}
+    return best, n_tests
+
+
+def check_beam_on_lambert_arcs(results):
+    """ Exhaustif contre beam (K = 1, 2, 3) sur les mêmes arcs Lambert."""
+    incoming, outgoing = build_arc_sets(results)   # calculés une seule fois
+
+    print(f"\n{'recherche':>10} | {'Δv total (km/s)':>16} | {'t_B (s)':>10} | "
+          f"{'t_C (s)':>7} | raccords testés")
+    runs = [("exhaustif", None), ("K = 1", 1), ("K = 2", 2), ("K = 3", 3)]
+    found = {}
+    for label, k in runs:
+        best, n_tests = search_lambert_arcs(incoming, outgoing, k)
+        found[label] = best
+        if best is None:
+            print(f"{label:>10} | {'aucun':>16} | {'—':>10} | {'—':>7} | {n_tests}")
+        else:
+            print(f"{label:>10} | {best['total']:16.6f} | {best['t_b']:+10.6f} | "
+                  f"{best['t_c']:7.0f} | {n_tests}")
+
+    # L'exhaustif retrouve le meilleur trajet de la 16D.2
+    ref = found["exhaustif"]
+    assert ref is not None
+    assert abs(ref["total"] - 6.008701) < 1e-6, ref
+    assert abs(ref["t_b"] - 5.060227) < 1e-6, ref
+    assert ref["t_c"] == 1010.0, ref
+
+    # K = 3 garde les trois arcs entrants, donc il doit faire comme l'exhaustif
+    best3 = found["K = 3"]
+    assert best3 is not None and abs(best3["total"] - ref["total"]) < 1e-12
+
+
 def main():
     r_a, r_c = compute_points_a_and_c()
-    check_grid(r_a, r_c)          # Tableau des 5 dates
-    check_brent(r_a, r_c)         # Brent, périastre, Δv
-    compare_arrivals(r_a, r_c)    # Trois dates d'arrivée
-    check_beam_vs_exhaustive()    # Beam contre exhaustif
+    check_grid(r_a, r_c)                   # Tableau des 5 dates
+    check_brent(r_a, r_c)                  # Brent, périastre, Δv
+    results = compare_arrivals(r_a, r_c)   # Trois dates d'arrivée (arcs calculés ici, une fois)
+    check_beam_vs_exhaustive()             # Beam contre exhaustif, mini-cas
+    check_beam_on_lambert_arcs(results)    # Beam contre exhaustif, arcs Lambert
 
 
 if __name__ == "__main__":
