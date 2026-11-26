@@ -24,6 +24,7 @@ On a donc 2 vitesses en B à t = 0: une juste avant le survol et une juste aprè
 """
 
 import cupy as cp
+import numpy as np
 from scipy.optimize import brentq
 import warpkep
 from flyby import check_flyby
@@ -224,7 +225,43 @@ def compare_arrivals(r_a, r_c):
     return best
 
 
+def exhaustive_reference():
+    """Recherche exhaustive sur un mini-graphe de raccords en B.
 
+    Deux arcs entrants arrivent au même B à la même date, un seul arc sortant.
+    On teste TOUS les raccords (entrant → sortant) avec check_flyby puis on garde le moins cher parmi ceux qui sont acceptés.
+    """
+    v_b = np.array([0.0, 10.0, 0.0])     # vitesse du corps B (km/s)
+    v_out = np.array([0.0, 13.0, 0.0])   # vitesse de sortie, arc sortant unique (km/s)
+    arrival_cost = 0.5                   # coût d'arrivée fictif (km/s)
+
+    incoming_arcs = [
+        {"name": "arc 1", "v_in": np.array([4.0, 10.0, 0.0]), "cost": 1.0},
+        {"name": "arc 2", "v_in": np.array([3.0, 10.0, 0.0]), "cost": 2.0},
+    ]
+
+    best = None
+    for arc in incoming_arcs:
+        # Normes des vitesses relatives à B, pour comprendre le verdict
+        speed_in = np.linalg.norm(arc["v_in"] - v_b)
+        speed_out = np.linalg.norm(v_out - v_b)
+
+        feasible, r_p = check_flyby(v_b, arc["v_in"], v_out,
+                                    mu_b=MU_B, r_min=R_MIN, speed_atol=1e-8)
+        print(f"{arc['name']} : |v∞,in| = {speed_in:.3f}, |v∞,out| = {speed_out:.3f}, " f"r_p = {r_p}, {'accepté' if feasible else 'rejeté'}")
+        if not feasible:
+            continue
+
+        total = arc["cost"] + arrival_cost
+        if best is None or total < best["total"]:
+            best = {"name": arc["name"], "total": total, "r_p": r_p}
+
+    # Contrôles attendus par l'énoncé
+    assert best is not None, "aucun raccord accepté"
+    assert best["name"] == "arc 2", best
+    assert abs(best["total"] - 2.5) < 1e-12, best
+    print(f"Exhaustif : meilleur trajet = {best['name']}, coût total = {best['total']:.1f} km/s")
+    return best
 
 
 
@@ -295,8 +332,11 @@ def main():
     
     print("\nContrôle t_b = 0 : on retrouve bien les vitesses de l'énoncé.")
 
-
+    # On compare les trajets pour plusieurs dates d'arrivée en C, et on affiche le meilleur 
     compare_arrivals(r_a, r_c)
+
+    # On vérifie que l'algorithme de recherche exhaustive sur un mini-graphe de raccords en B retrouve bien le meilleur trajet
+    exhaustive_reference()
 
 
     
