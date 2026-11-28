@@ -13,6 +13,7 @@ The tests compare results with analytical orbits and independent Kepler propagat
 | Zero-revolution Lambert | Known conics, time residual and position/velocity Kepler closure | CPU CTest `lambert` |
 | Multi-revolution Lambert | Circular short/long arcs at `M = 0, 1, 2`, polar `M = 1`, ellipse `M = 2`, threshold and failure paths | CPU CTest `lambert_multi_rev` |
 | GPU propagation | Shared conics, block boundaries, invariants, round trips and failures in `test_kepler_gpu.cpp` | Explicit GPU run required |
+| GPU Lambert | CPU/GPU comparison for both arcs at `M = 0, 1, 2`, including failure statuses | Explicit GPU CTest `lambert_gpu_validation` |
 | Python/CuPy | Analytical mixed batch, empty batch and invalid `mu` in `test_python_cuda.py` | Explicit GPU run required |
 | Documentation example | Compiled C++ example with position/velocity closure and fixed-M enumeration | Documentation CI job |
 
@@ -77,21 +78,23 @@ compute-sanitizer --tool memcheck --leak-check full --error-exitcode 1 \
   ./build/gpu/warpkep_test_kepler_gpu
 ```
 
-The GPU suite uses batch sizes 1, 255, 256, 257 and 1025 to test block boundaries. It also checks empty batches, mixed valid and invalid inputs, energy and angular momentum drift, and forward/backward propagation. Invariant and round-trip tolerances are `1e-11`; state comparisons use each case's scaled tolerance. Exported GPU samples can be checked with the same independent reference script.
+The Kepler GPU test uses batch sizes 1, 255, 256, 257 and 1025 to test block boundaries. It also checks empty batches, mixed valid and invalid inputs, energy and angular momentum drift, and forward/backward propagation. Invariant and round-trip tolerances are `1e-11`; state comparisons use each case's scaled tolerance. Exported GPU samples can be checked with the same independent reference script.
 
-The Python tests require a CUDA-enabled package and CuPy:
+The Lambert GPU test checks roots, velocities and statuses against the scalar CPU solver and checks the time-of-flight residual. It includes empty batches, invalid inputs and cases below and near the minimum flight time.
+
+Run the Python tests with a CUDA-enabled package and CuPy.
 
 ```bash
-python -m pytest tests/test_python_cuda.py -q
+python -m pytest -q tests/test_python_cuda.py tests/test_python_rendezvous.py
 ```
 
-The Python tests include a non-blocking stream and a mixed batch of 257 trajectories, with analytical state checks at `1e-12`. If CuPy is missing, pytest skips the file. These tests need a GPU and do not run on the standard hosted CI runners.
+`test_python_cuda.py` checks a non-blocking stream and a mixed batch of 257 trajectories against analytical states. `test_python_rendezvous.py` checks a circular transfer and refinement around the best date pair. Both files require CuPy and a GPU.
 
 ## What hosted CI checks
 
 `.github/workflows/ci.yml` runs on pushes, pull requests and manual dispatch. The `cpu-python` job builds with `BUILD_TESTING=ON` and runs `ctest --test-dir build/cpu --output-on-failure`, which includes all seven CPU tests: the Kepler tests, `lambert` and `lambert_multi_rev`. It also checks the Python package import and version, and runs a small parallel CPU batch.
 
-The `references` job compares CPU Kepler results with independent propagators. The `cuda-compile` job compiles and links the CUDA targets, including the GPU test executable, but does not execute kernels. Neither GPU CTest tests nor `tests/test_python_cuda.py` run on these hosted runners.
+The `references` job compares CPU Kepler results with independent propagators. The `cuda-compile` job builds the CUDA library, which includes both kernels, and selected Kepler targets. Run the GPU CTest and CuPy checks on a CUDA machine.
 
 `.github/workflows/docs.yml` builds HTML with warnings treated as errors, compiles and runs the Lambert example, and uploads the HTML as a downloadable artifact.
 

@@ -1,6 +1,6 @@
 # Benchmarks
 
-Two programs measure Kepler propagation: a serial/parallel CPU baseline and a CPU/GPU comparison. Both check the numerical results as well as timing the computation.
+The Kepler benchmarks measure serial and parallel CPU propagation and compare CPU and GPU timings. The Lambert benchmark measures batched GPU solves.
 
 ## CPU baseline
 
@@ -44,6 +44,17 @@ The program tests fixed batch sizes from 1 to 1,048,576. Results go to stdout as
 GPU memory and pinned host buffers are allocated before timing. After a one-second warm-up, the program takes nine samples, with 32 launches per kernel timing sample. The measurement including transfers excludes allocation and CPU conversion from AoS to SoA. It does not include the Python/CuPy wrapper's allocation and binding costs.
 
 The CPU and GPU use the same propagation code. Their agreement helps catch execution errors; the separate [reference comparisons](validation.md#independent-kepler-references) check numerical accuracy independently.
+
+## Lambert batches on CUDA
+
+Configure `build/bench-gpu` as above and run the Lambert target on a CUDA machine.
+
+```bash
+cmake --build build/bench-gpu --target warpkep_lambert_benchmark --parallel 2
+./build/bench-gpu/warpkep_lambert_benchmark
+```
+
+The benchmark repeats the same one-revolution short transfer in batches of 524,288, 1,048,576 and 524,288. After one warm-up launch per batch size, it reports median time per batch and transfers per second from nine samples of 32 launches. CUDA events measure work with arrays already on the GPU. Each transfer must return two solutions and a complete result. For comparisons of the numerical values, see [GPU validation](validation.md#gpu-execution).
 
 ## Reporting a result
 

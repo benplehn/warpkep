@@ -111,8 +111,8 @@ Compilation needs the CUDA toolkit; the tests also need a compatible GPU. If CuP
 | `BUILD_TESTING` | `ON` through CTest | Build/register CPU tests and build the CPU sample generator |
 | `WARPKEP_BUILD_PYTHON` | `OFF` in CMake; `ON` through pip | Build the nanobind `_core` extension |
 | `WARPKEP_ENABLE_CUDA` | `OFF` | Build the CUDA library and consumers; also `_cuda` when Python is enabled |
-| `WARPKEP_RUN_GPU_TESTS` | `OFF` | Register two GPU CTest tests; requires CUDA and `BUILD_TESTING=ON` |
-| `WARPKEP_BUILD_BENCHMARKS` | `OFF` | Build the CPU baseline and, with CUDA, the CPU/GPU benchmark |
+| `WARPKEP_RUN_GPU_TESTS` | `OFF` | Register three GPU CTest tests with CUDA and `BUILD_TESTING=ON` |
+| `WARPKEP_BUILD_BENCHMARKS` | `OFF` | Build the CPU baseline and, with CUDA, the Kepler and Lambert benchmarks |
 | `CMAKE_CUDA_ARCHITECTURES` | Toolchain-dependent | Select CUDA architectures explicitly for reproducible builds |
 
 ## Documentation
