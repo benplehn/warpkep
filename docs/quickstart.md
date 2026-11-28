@@ -74,4 +74,4 @@ Expected first column, within numerical tolerance:
 [0, 1, 0, -1, 0, 0]
 ```
 
-The results stay on the GPU and are ready when the call returns. `cp.asnumpy` copies the first state to the CPU for display. See the [Python/CuPy guide](python_cuda.md) for input requirements, streams and errors.
+The results stay on the GPU and are ready when the call returns. `cp.asnumpy` copies the first state to the CPU for display. See the [Python/CuPy guide](python_cuda.md) for input requirements, streams and errors. The [trajectory examples](trajectory_examples.md) combine propagation and Lambert solves for rendezvous and flyby cases.

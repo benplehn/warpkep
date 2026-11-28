@@ -96,7 +96,7 @@ Open [localhost:8000](http://localhost:8000). A separate CI workflow builds the 
 
 ## Project direction
 
-The next steps are broader Lambert validation and a public API, followed by GPU batching and trajectory search. See the [roadmap](docs/roadmap.md) for planned work and the [benchmark guide](docs/benchmarks.md) for performance measurements.
+The [trajectory examples](docs/trajectory_examples.md) use Kepler propagation and Lambert batches for rendezvous and flyby searches. See the [roadmap](docs/roadmap.md) for planned work and the [benchmark guide](docs/benchmarks.md) for timing procedures.
 
 ## License
 

@@ -35,6 +35,7 @@ quickstart
 
 lambert
 python_cuda
+trajectory_examples
 ```
 
 ```{toctree}
