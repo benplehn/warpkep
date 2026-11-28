@@ -160,6 +160,26 @@ Each SoA view holds six borrowed pointers, in order `r_x, r_y, r_z, v_x, v_y, v_
 
 The returned `cudaError_t` reports launch errors. Check for asynchronous execution errors when waiting for completion, then read `statuses` for each trajectory's numerical result. See the [memory and execution contract](numerical_contract.md#cuda-batch-memory-and-execution).
 
+## C++ CUDA Lambert
+
+Include `<warpkep/cuda/lambert.hpp>` and link `warpkep::cuda`.
+
+```cpp
+cudaError_t warpkep::launch_lambert_multi_rev_soa_double(
+    Vector3SoAConstView<double> departures,
+    Vector3SoAConstView<double> arrivals,
+    const double* durations, double mu,
+    detail::LambertArc arc, int revolutions,
+    detail::LambertMultiRevOptions options,
+    LambertMultiRevSoAView<double> output,
+    std::size_t n, cudaStream_t stream
+);
+```
+
+Pass one flight time per transfer. `mu`, `arc`, `revolutions` and `options` apply to the whole batch. Each position view holds three device pointers in `x, y, z` order. Allocate both output slots, including when `M = 0`. Each slot holds departure and arrival velocity views, `x`, a branch status and an iteration count. The output also holds per-transfer `statuses`, `slot_count`, `solution_count` and an integer `complete` flag.
+
+The launcher submits work asynchronously. Keep the buffers alive and check stream completion before reading the numerical results. An empty batch submits no work. See the [memory and execution contract](numerical_contract.md#cuda-batch-memory-and-execution).
+
 ## Python interface
 
 ### `warpkep.version()`

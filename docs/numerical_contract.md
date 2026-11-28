@@ -42,7 +42,7 @@ Coincident, collinear and nearly collinear positions are unsupported. The geomet
 
 ## Precision and termination
 
-CPU Kepler primitives accept FP32 and FP64; independent reference comparisons use FP64. Both Lambert entry points require FP64 at compile time. The CUDA propagation API and Python/CuPy wrapper also use FP64, with no implicit downcasting.
+CPU Kepler primitives accept FP32 and FP64; independent reference comparisons use FP64. Both Lambert entry points require FP64 at compile time. The CUDA batch APIs and Python/CuPy wrappers use FP64, with no implicit downcasting.
 
 | Solver setting | Default | Acceptance meaning |
 | --- | --- | --- |
@@ -110,7 +110,9 @@ The launcher submits work to the supplied stream without allocating, copying or 
 
 For `n == 0`, it returns `cudaSuccess` without submitting work or touching pointers; null pointers are accepted. One numerical failure does not abort other trajectories in a completed batch.
 
-The CUDA kernel uses the shared scalar Kepler implementation. Its dedicated GPU test covers conic cases, invariants and round trips; the default hosted CI only compiles CUDA and does not execute these checks.
+`launch_lambert_multi_rev_soa_double` follows the same buffer and stream rules. It reads two three-component position views and writes both solution slots, even for zero revolutions. For `M = 0`, the inactive slot has NaN velocities and root, `unsupported_case` status and zero iterations. See the [CUDA Lambert reference](api.md#c-cuda-lambert).
+
+The CUDA kernels use the shared scalar implementations. Hosted CI compiles CUDA, and the numerical checks run on a GPU.
 
 ## Python/CuPy execution
 

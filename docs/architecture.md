@@ -1,8 +1,6 @@
 # Architecture
 
-# Architecture
-
-Where each piece of warpkep lives, and how a call travels through the CPU Lambert solver and the GPU Kepler batch.
+Call paths for the scalar Kepler and Lambert solvers and their CUDA batches.
 
 ## Files
 
@@ -20,11 +18,11 @@ Where each piece of warpkep lives, and how a call travels through the CPU Lamber
 | `include/warpkep/kepler_status.hpp`                                         | `KeplerPropagationStatus`, `propagation_status_name`                                  | Public                       |
 | `include/warpkep/cuda/kepler.hpp`                                           | Declaration of`launch_kepler_soa_double` and its contract                             | Public                       |
 | `src/cuda/kepler.cu`                                                        | Kernel`kepler_propagation_soa_kernel<T>`(file-local) and the launcher definition      | Compiled into`warpkep::cuda` |
-| `tests/test_lambert_cpu.cpp`                                                | Lambert analytical cases, Kepler closure, parabolic neighbourhood, failure paths      | Test                         |
+| `tests/test_lambert.cpp`                                                    | Lambert analytical cases, Kepler closure, parabolic neighbourhood, failure paths      | Test                         |
 | `examples/cuda_smoke.cu`                                                    | Compile-only kernels covering the internal primitives on the device                   | Example                      |
 | `examples/kepler_gpu_smoke.cpp`                                             | Plain C++ program using the library on a 257-trajectory batch                         | Example / GPU test           |
 
-The Kepler primitives in** **`detail/` are templated on** **`T` (float or double) and marked** **`WARPKEP_HD`, so the same source compiles for the CPU and the GPU. The Lambert solver is CPU-only for now: it is not marked** **`WARPKEP_HD` and its entry point accepts FP64 only. Only the FP64 Kepler launcher is public on the GPU side.
+The Kepler primitives compile for the host and device in FP32 and FP64. The Lambert routines also compile for both, in FP64.
 
 ## CPU Lambert call path
 
@@ -59,7 +57,9 @@ Results use two fixed-capacity slots with individual statuses and an overall com
 
 CMake target** **`<span><span>warpkep_test_lambert_multi_rev</span></span>` is registered with CTest. The existing CPU workflow builds and runs it automatically.
 
-Lambert remains CPU-only: its scalar functions are not yet annotated for device execution, and no Lambert kernel, launcher or CuPy binding is provided.
+## GPU Lambert call path
+
+`launch_lambert_multi_rev_soa_double` submits the kernel in `src/cuda/lambert.cu` to the caller's stream. Each thread loads one pair of positions and its flight time, calls the shared `solve_lambert_multi_rev_cpu<double>` routine and writes the request status and both output slots. See the [CUDA API](api.md#c-cuda-lambert) for the buffer layout.
 
 ## GPU Kepler call path
 
@@ -101,7 +101,7 @@ The scalar propagator runs as an ordinary device function; no kernel launches an
 | Target                                 | Kind                | Built when                 | Role                                                                       |
 | -------------------------------------- | ------------------- | -------------------------- | -------------------------------------------------------------------------- |
 | `warpkep`                              | C++ library         | Always                     | Core target: public and internal headers, including the CPU Lambert solver |
-| `warpkep_cuda` (alias `warpkep::cuda`) | Static CUDA library | `WARPKEP_ENABLE_CUDA=ON`   | Compiles`src/cuda/kepler.cu`; links `warpkep` and `CUDA::cudart` publicly  |
+| `warpkep_cuda` (alias `warpkep::cuda`) | Static CUDA library | `WARPKEP_ENABLE_CUDA=ON`   | Builds the Kepler and Lambert kernels and links `warpkep` and `CUDA::cudart` publicly  |
 | `warpkep_cuda_compile_smoke`           | Object library      | `WARPKEP_ENABLE_CUDA=ON`   | Device compilation check of the primitives; not linked into anything       |
 | `warpkep_gpu_smoke`                    | Executable          | `WARPKEP_ENABLE_CUDA=ON`   | Links only`warpkep::cuda`; compiled as plain C++                           |
 | CTest`kepler_gpu_smoke`                | Test, label`gpu`    | `WARPKEP_RUN_GPU_TESTS=ON` | Runs`warpkep_gpu_smoke`; needs a CUDA device                               |
@@ -129,7 +129,7 @@ This page shows where each piece of the Kepler batch lives and how a call travel
 | `examples/cuda_smoke.cu`                                                    | Compile-only kernels covering the internal primitives on the device                   | Example                      |
 | `examples/kepler_gpu_smoke.cpp`                                             | Plain C++ program using the library on a 257-trajectory batch                         | Example / GPU test           |
 
-All scalar code in `detail/` is templated on `T` (float or double) and marked `WARPKEP_HD`, so the same source compiles for the CPU and the GPU. Only the FP64 launcher is public for now.
+The CUDA Kepler batch launcher uses the shared scalar propagator in FP64.
 
 ## Call path
 
@@ -173,7 +173,7 @@ The scalar propagator is called as an ordinary device function; no kernel calls 
 | Target                                 | Kind                | Built when                 | Role                                                                      |
 | -------------------------------------- | ------------------- | -------------------------- | ------------------------------------------------------------------------- |
 | `warpkep`                              | C++ library         | Always                     | Core target: public and internal headers                                  |
-| `warpkep_cuda` (alias `warpkep::cuda`) | Static CUDA library | `WARPKEP_ENABLE_CUDA=ON`   | Compiles`src/cuda/kepler.cu`; links `warpkep` and `CUDA::cudart` publicly |
+| `warpkep_cuda` (alias `warpkep::cuda`) | Static CUDA library | `WARPKEP_ENABLE_CUDA=ON`   | Builds the Kepler and Lambert kernels and links `warpkep` and `CUDA::cudart` publicly |
 | `warpkep_cuda_compile_smoke`           | Object library      | `WARPKEP_ENABLE_CUDA=ON`   | Device compilation check of the primitives; not linked into anything      |
 | `warpkep_gpu_smoke`                    | Executable          | `WARPKEP_ENABLE_CUDA=ON`   | Links only`warpkep::cuda`; compiled as plain C++                          |
 | CTest`kepler_gpu_smoke`                | Test, label`gpu`    | `WARPKEP_RUN_GPU_TESTS=ON` | Runs`warpkep_gpu_smoke`; needs a CUDA device                              |
