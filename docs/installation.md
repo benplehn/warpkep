@@ -46,7 +46,7 @@ python -m pip install .
 python -c 'import warpkep; print(warpkep.version())'
 ```
 
-The default installation builds `_core` and provides `warpkep.version()`. Calling `warpkep.propagate_kepler` requires the CUDA extension and CuPy. CPU propagation and Lambert are currently available only through C++.
+The default installation builds `_core` and provides `warpkep.version()`. Both `warpkep.propagate_kepler` and `warpkep.solve_lambert` require the CUDA extension and CuPy. The scalar CPU solvers are available through C++.
 
 ## CUDA library and tests
 

@@ -18,7 +18,7 @@ The current version is `0.1.0.dev0`. The numerical interfaces are experimental, 
 | Zero-revolution Lambert | Internal C++, short and long arcs | FP64 | Implemented |
 | Multi-revolution Lambert | Internal C++, fixed `M`, two branch slots | FP64 | Implemented; analytical tests for `M = 1, 2` |
 
-Lambert runs on the CPU through C++. Its results distinguish a failed computation, a flight time that is too short for the requested revolution count, and a time too close to the minimum to resolve the two branches. The [numerical contract](docs/numerical_contract.md) describes the supported inputs, tolerances and failure behaviour.
+Lambert is also available in batches on CUDA through C++ and CuPy. Both versions distinguish a failed computation, a flight time that is too short for the requested revolution count, and a time too close to the minimum to resolve the two branches. The [numerical contract](docs/numerical_contract.md) describes the supported inputs, tolerances and failure behaviour.
 
 ## Build and test on CPU
 
@@ -80,7 +80,7 @@ python -m pip install . \
   -Ccmake.define.BUILD_TESTING=OFF
 ```
 
-`warpkep.propagate_kepler(states, durations, mu=...)` takes CuPy arrays of shape `(6, N)` and `(N,)`. It returns the propagated states, statuses and iteration counts on the GPU, ready when the call returns. The [Python/CuPy guide](docs/python_cuda.md) covers array layout, streams and error handling.
+`warpkep.propagate_kepler(states, durations, mu=...)` takes CuPy arrays of shape `(6, N)` and `(N,)`. It returns the propagated states, statuses and iteration counts on the GPU, ready when the call returns. `warpkep.solve_lambert` takes two position arrays of shape `(3, N)` and one flight time per transfer. The [Python/CuPy guide](docs/python_cuda.md) covers array layout, streams and error handling.
 
 ## Build the documentation
 

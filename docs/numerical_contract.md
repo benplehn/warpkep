@@ -116,11 +116,11 @@ The CUDA kernels use the shared scalar implementations. Hosted CI compiles CUDA,
 
 ## Python/CuPy execution
 
-The Python wrapper requires CuPy `float64` inputs in C-contiguous layout, on the same GPU. It allocates three output arrays and returns only after the outputs are ready. The binding additionally allocates a temporary typed status buffer.
+The Python wrapper requires CuPy `float64` inputs in C-contiguous layout, on the same GPU. It allocates three output arrays for propagation and nine for Lambert, then waits until they are ready. The binding additionally allocates a temporary typed status buffer.
 
 The wrapper waits for the current CuPy stream on the input device before calling the binding. If another stream produced the inputs, wait for that producer first. Sharing an array between libraries does not by itself synchronize their streams.
 
-The [Python/CuPy guide](python_cuda.md) lists array shapes, exceptions and status constants. An invalid `mu` rejects the whole Python call. Invalid individual states are reported in the returned statuses.
+The [Python/CuPy guide](python_cuda.md) lists array shapes, exceptions and status constants. An invalid `mu` or negative Lambert revolution count rejects the whole Python call. Invalid individual states and transfers are reported in the returned statuses.
 
 ## Structural and execution errors
 

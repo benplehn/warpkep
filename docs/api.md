@@ -192,8 +192,12 @@ Returns `(out, statuses, iterations)` as CuPy arrays, ready when the call return
 
 The wrapper allocates its outputs and waits for execution. It accepts GPU inputs without converting their dtype or layout. See the [Python/CuPy guide](python_cuda.md) for streams and exceptions.
 
+### `warpkep.solve_lambert(departures, arrivals, durations, *, mu=1.0, revolutions=0, long_arc=False)`
+
+Solves a batch for one revolution count and arc choice. It returns nine CuPy arrays, including both velocity slots and the per-slot and per-transfer diagnostics. See the [CuPy Lambert guide](python_cuda.md#solve-lambert-transfers) for the tuple order, array shapes and an example.
+
 ## Status types
 
 `<warpkep/kepler_status.hpp>` defines `warpkep::KeplerPropagationStatus` and `warpkep::propagation_status_name`. `<warpkep/lambert_status.hpp>` defines `warpkep::LambertStatus`, including `no_solution` and `near_minimum`. The Lambert example includes a local helper for printing status names.
 
-The Python GPU extension exports `SUCCESS`, `INVALID_INPUT`, `UNSUPPORTED_CASE`, `NOT_CONVERGED` and `NUMERICAL_FAILURE` in `warpkep._cuda`. Compare against these constants rather than hard-coding integers. See the [status contract](numerical_contract.md#status-meanings).
+The Python GPU extension exports `SUCCESS`, `INVALID_INPUT`, `UNSUPPORTED_CASE`, `NOT_CONVERGED` and `NUMERICAL_FAILURE` in `warpkep._cuda`. These values also match the first five Lambert statuses. See the [status contract](numerical_contract.md#status-meanings).

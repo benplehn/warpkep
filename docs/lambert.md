@@ -2,7 +2,7 @@
 
 Given two positions and a flight time, Lambert's problem asks for the departure and arrival velocities of a two-body orbit. warpkep uses [Izzo's formulation](https://arxiv.org/abs/1403.2705) in double precision for scalar CPU solves and CUDA batches.
 
-The scalar C++ routines are in `warpkep::detail` and may change during development. They allocate no memory and throw no exceptions. For batches, see the [C++ CUDA launcher](api.md#c-cuda-lambert).
+The scalar C++ routines are in `warpkep::detail` and may change during development. They allocate no memory and throw no exceptions. For batches, see the [C++ CUDA launcher](api.md#c-cuda-lambert) or the [CuPy interface](python_cuda.md#solve-lambert-transfers).
 
 ## Geometry, arcs and revolutions
 
